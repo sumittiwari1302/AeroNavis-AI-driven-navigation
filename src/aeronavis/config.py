@@ -36,6 +36,24 @@ class ModelConfig:
     slip_max_params: int
     texture_gate_max_params: int
     visual_odo_max_params: int
+    lora_rank: int
+    lora_alpha: int
+    lora_max_bytes: int
+
+
+@dataclass(frozen=True)
+class AdaptationConfig:
+    l_vel_weight: float
+    l_smooth_weight: float
+    l_gnss_weight: float
+    update_every_n: int
+    window_size: int
+    lr: float
+    momentum: float
+    clip_norm: float
+    loss_window_s: int
+    freeze_threshold_pct: float
+    gnss_residual_patience: int
 
 
 @dataclass(frozen=True)
@@ -96,6 +114,7 @@ class Config:
     paths: PathsConfig
     data: DataConfig
     splits: SplitsConfig
+    adaptation: AdaptationConfig
     seed: int
 
 
@@ -110,6 +129,7 @@ GROUP_PREFIX: dict[type, str] = {
     PathsConfig: "paths",
     DataConfig: "data",
     SplitsConfig: "splits",
+    AdaptationConfig: "adaptation",
 }
 
 

@@ -27,6 +27,26 @@ model.texture_gate_max_params: 100000
 # Visual odometry
 model.visual_odo_max_params: 1000000
 
+# --- adaptation ---------------------------------------------------------------
+# LoRA adapters for test-time adaptation
+model.lora_rank: 8
+model.lora_alpha: 16
+model.lora_max_bytes: 200000
+# Adaptation loss weights
+adaptation.l_vel_weight: 1.0
+adaptation.l_smooth_weight: 0.5
+adaptation.l_gnss_weight: 1.0
+# Update schedule
+adaptation.update_every_n: 5
+adaptation.window_size: 10
+adaptation.lr: 0.0001
+adaptation.momentum: 0.9
+adaptation.clip_norm: 1.0
+# Guards
+adaptation.loss_window_s: 30
+adaptation.freeze_threshold_pct: 10.0
+adaptation.gnss_residual_patience: 3
+
 # --- texture ----------------------------------------------------------------
 # Keypoint-texture thresholds used to judge visual-odo track quality.
 texture.threshold.rich: 2000.0

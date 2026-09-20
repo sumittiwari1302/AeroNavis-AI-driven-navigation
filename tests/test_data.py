@@ -35,6 +35,7 @@ def test_self_collected_handler_idempotent(tmp_path):
         ),
         data=None,
         splits=None,
+        adaptation=None,
         seed=42,
     )
     handler = SelfCollectedHandler(cfg, root=tmp_path)
@@ -135,6 +136,7 @@ def test_split_leakage():
         ),
         data=None,
         splits=type("S", (), {"train_ratio": 0.7, "val_ratio": 0.15}),
+        adaptation=None,
         seed=42,
     )
     seqs = [
@@ -162,6 +164,7 @@ def test_split_ratios_approximate():
         ),
         data=None,
         splits=type("S", (), {"train_ratio": 0.7, "val_ratio": 0.15}),
+        adaptation=None,
         seed=42,
     )
     # 20 sequences, 10 unique drives (2 per drive)
@@ -221,6 +224,7 @@ def test_self_collected_importer(tmp_path):
             },
         ),
         splits=None,
+        adaptation=None,
         seed=42,
     )
     run = tmp_path / "run_001"
