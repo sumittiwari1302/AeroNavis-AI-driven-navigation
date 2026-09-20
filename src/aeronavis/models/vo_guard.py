@@ -96,9 +96,9 @@ if __name__ == "__main__":
     decide, reset = make_vo_guard(config)
 
     # Test cases
-    assert decide(0, 1.0, 5.0) is True   # rich, low residual, fast -> accept
-    assert decide(1, 1.0, 5.0) is True   # medium, low residual, fast -> accept
-    assert not decide(2, 1.0, 5.0)       # poor -> reject
-    assert not decide(0, 3.0, 5.0)       # high residual -> reject
-    assert not decide(0, 1.0, 0.3)       # too slow -> reject
+    assert decide(0, 1.0, 5.0) is True  # rich, low residual, fast -> accept
+    assert decide(1, 1.0, 5.0) is True  # medium, low residual, fast -> accept
+    assert not decide(2, 1.0, 5.0)  # poor -> reject
+    assert not decide(0, 3.0, 5.0)  # high residual -> reject
+    assert not decide(0, 1.0, 0.3)  # too slow -> reject
     print("VO guard tests passed!")

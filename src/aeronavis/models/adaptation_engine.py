@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AdaptationState:
     """Current health state of the adaptation engine."""
+
     active: bool = True
     step_count: int = 0
     total_loss: float = 0.0
@@ -81,11 +82,11 @@ class AdaptationEngine:
 
     def step(
         self,
-        window_acc: torch.Tensor,      # (B, W, 3)
-        window_gyr: torch.Tensor,      # (B, W, 3)
+        window_acc: torch.Tensor,  # (B, W, 3)
+        window_gyr: torch.Tensor,  # (B, W, 3)
         pseudo_speed: Optional[torch.Tensor],  # (B,) or None
-        pseudo_rel: Optional[torch.Tensor],    # (B,) or None
-        gnss_speed: Optional[torch.Tensor],    # (B,) or None
+        pseudo_rel: Optional[torch.Tensor],  # (B,) or None
+        gnss_speed: Optional[torch.Tensor],  # (B,) or None
         gnss_ok: bool,
     ) -> float:
         """Perform one adaptation step. Returns current total loss."""
@@ -117,7 +118,7 @@ class AdaptationEngine:
                 loss = loss + self.config.adaptation.l_vel_weight * l_vel
 
         # L_smooth: temporal smoothness prior
-        if hasattr(self, '_prev_vel_pred') and self._prev_vel_pred is not None:
+        if hasattr(self, "_prev_vel_pred") and self._prev_vel_pred is not None:
             l_smooth = F.mse_loss(vel_pred, self._prev_vel_pred)
             l_smooth_loss = l_smooth
             loss = loss + self.config.adaptation.l_smooth_weight * l_smooth
@@ -193,21 +194,23 @@ class AdaptationEngine:
 
     def _update_stats(self):
         """Update rolling stats."""
-        if hasattr(self.lora_model, 'lora_layers'):
+        if hasattr(self.lora_model, "lora_layers"):
             total_delta = 0.0
             for lora in self.lora_model.lora_layers.values():
-                if hasattr(lora, 'A') and hasattr(lora, 'B'):
+                if hasattr(lora, "A") and hasattr(lora, "B"):
                     total_delta += lora.A.grad.norm().item() if lora.A.grad is not None else 0
                     total_delta += lora.B.grad.norm().item() if lora.B.grad is not None else 0
             self.state.params_delta_norm = total_delta
 
-        self.state.loss_history.append({
-            "step": self.state.step_count,
-            "total": self.state.total_loss,
-            "l_vel": self.state.l_vel_loss,
-            "l_smooth": self.state.l_smooth_loss,
-            "l_gnss": self.state.l_gnss_loss,
-        })
+        self.state.loss_history.append(
+            {
+                "step": self.state.step_count,
+                "total": self.state.total_loss,
+                "l_vel": self.state.l_vel_loss,
+                "l_smooth": self.state.l_smooth_loss,
+                "l_gnss": self.state.l_gnss_loss,
+            }
+        )
 
     def infer(self, window_acc, window_gyr, att0) -> float:
         """Forward pass with adapters ACTIVE (inference mode)."""
@@ -260,11 +263,14 @@ class AdaptationEngine:
     def save_snapshot(self, path: Path):
         """Save current adapter state."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save({
-            "lora_state": self.lora_model.lora_state_dict(),
-            "optimizer": self.optimizer.state_dict(),
-            "state": self.state.__dict__,
-        }, path)
+        torch.save(
+            {
+                "lora_state": self.lora_model.lora_state_dict(),
+                "optimizer": self.optimizer.state_dict(),
+                "state": self.state.__dict__,
+            },
+            path,
+        )
 
     def load_snapshot(self, path: Path):
         """Load adapter state."""
