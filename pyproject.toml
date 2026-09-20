@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aeronavis"
+version = "0.1.0"
+description = "AeroNavis — AI-driven navigation engine (SIH 2026, ISRO SIH26168)"
+requires-python = ">=3.10"
+dependencies = [
+    "torch==2.3.1",
+    "numpy==1.26.4",
+    "scipy==1.14.0",
+    "scikit-learn==1.5.1",
+    "matplotlib==3.9.0",
+    "pandas==2.2.2",
+    "pyyaml==6.0.1",
+    "h5py==3.11.0",
+    "pyarrow==16.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.2.2",
+    "ruff==0.5.0",
+    "mypy==1.10.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --tb=short"
+
+[tool.mypy]
+strict = false
+python_version = "3.10"

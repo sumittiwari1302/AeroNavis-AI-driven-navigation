@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.pt
+*.onnx
+*.tflite
+data/raw/**
+data/processed/**
+models/**
+.DS_Store
+*.log
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+.pytest_cache/

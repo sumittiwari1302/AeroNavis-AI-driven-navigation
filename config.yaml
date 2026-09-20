@@ -1,0 +1,79 @@
+# AeroNavis 3.0 — global configuration
+# Flat namespaced keys only: `namespace.key` on a single line. No YAML nesting.
+# Every key referenced here has a matching field in src/aeronavis/config.py; the
+# dataclass spec is the source of truth for key existence and value types.
+
+# --- sensor -----------------------------------------------------------------
+# Native sampling rates of the on-board instruments feeding the pipeline.
+sensor.imu_hz: 100
+sensor.gnss_hz: 1
+sensor.cam_hz: 10
+
+# --- model ------------------------------------------------------------------
+# Window/stride govern the sliding context fed to learned dead-reckoning nets;
+# they appear in velocity & pseudo-odo forecasts, so every model shares them.
+model.window: 200
+model.stride: 10
+model.velocity_hidden: 128
+model.max_params: 500000
+# Pseudo wheel odometry (DeepOdo-style)
+model.pseudo_odo_hidden: 96
+model.pseudo_odo_max_params: 300000
+# Slip classifier
+model.slip_hidden: 48
+model.slip_max_params: 200000
+# Texture gate
+model.texture_gate_max_params: 100000
+# Visual odometry
+model.visual_odo_max_params: 1000000
+
+# --- texture ----------------------------------------------------------------
+# Keypoint-texture thresholds used to judge visual-odo track quality.
+texture.threshold.rich: 2000.0
+texture.threshold.medium: 400.0
+
+# --- fusion -----------------------------------------------------------------
+# Below this displacement a GNSS fix is treated as stationary, not a reseed.
+fusion.reseed_jump_max_m: 0.3
+
+# --- predict ----------------------------------------------------------------
+# Outage forecaster emits success probabilities at these look-ahead horizons.
+predict.horizons: [5, 10, 15]
+predict.threshold: 0.85
+
+# --- data --------------------------------------------------------------------
+# Target sampling rates of the normalized internal format (NavSequence).
+data.imu_hz: 100
+data.gnss_hz: 1
+data.wheel_hz: 10
+data.truth_hz: 10
+data.mag_hz: 50
+data.baro_hz: 25
+data.cam_hz: 10
+# Quality gates: reject sequences shorter than this or with worse GNSS coverage.
+data.min_seq_s: 60
+data.min_gnss_coverage: 0.3
+# A repeat gap strictly larger than this splits a sequence (we keep the longest
+# contiguous span and log the drops).
+data.max_gap_ms: 200
+# A GNSS fix gap beyond this is declared an outage interval (start, end).
+data.outage_min_gap_s: 2.0
+# WGS-84 semi-major axis, the only physical constant used for ENU projections.
+data.earth_radius_m: 6378137.0
+
+# --- splits ------------------------------------------------------------------
+# Train/val/test proportions. The seeding comes from the global `seed`; ratios
+# are targets that grouped drive-atoms make only approximately exact.
+splits.train_ratio: 0.7
+splits.val_ratio: 0.15
+
+# --- paths ------------------------------------------------------------------
+# Canonical artifacts locations; kept relative to the repo root.
+paths.raw: data/raw
+paths.processed: data/processed
+paths.splits: data/splits
+paths.models: models
+paths.benchmarks: benchmarks
+
+# --- runtime ----------------------------------------------------------------
+seed: 42
