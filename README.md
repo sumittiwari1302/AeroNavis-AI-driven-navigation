@@ -72,7 +72,14 @@ make lint
 
 See `RUNBOOK.md` for the exact macOS commands.
 
-## Status
+## Parts Completed (Pushed)
 
-- Part 0 (scaffolding/config/CI hygiene): done.
-- Part 1 (data downloaders/preprocess/splits): next.
+| Part | Description | Status |
+|------|-------------|--------|
+| Part 0 | Repo scaffolding, strict config loader, CI hygiene, Makefile, RUNBOOK | ✅ Done |
+| Part 1 | Dataset engine: IO-VNBD, RoNIN, IDOL downloaders; preprocess; leak-free splits; manifest | ✅ Done |
+| Part 2 | Velocity model: TCN+LSTM fusion, canonical frame (EqNIO), 259k params | ✅ Done |
+| Part 3 | Pseudo wheel odometry (DeepOdo CNN-GRU) + slip classifier (grip/slip/stationary) | ✅ Done |
+| Part 4 | Texture-gated visual odometry (UL-VIO style) + VO integrity guard | ✅ Done |
+
+Next: Part 5 (Map matching + reference anchors) → Part 6 (Outage forecaster) → Part 7 (Fusion/InEKF) → Part 8 (Adaptation) → Part 9 (Eval/Blackout protocol) → Part 10 (Benchmarks) → Part 11 (Full pipeline) → Part 12 (Submission prep) → Part 13 (Finalization).
