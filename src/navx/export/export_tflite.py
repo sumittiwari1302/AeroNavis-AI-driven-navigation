@@ -16,14 +16,24 @@ import torch
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+try:
+    import tensorflow as tf
+    TFLITE_AVAILABLE = True
+except ImportError:
+    tf = None
+    TFLITE_AVAILABLE = False
 
 from aeronavis.config import Config, get_config
 from aeronavis.models.velocity import VelocityModel, build_velocity_model
-from aeronavis.models.pseudo_odo import PseudoOdoModel, build_pseudo_odo_model
+from aeronavis.models.pseudo_odo import PseudoOdoModel, build_pseudo_odo_model, PseudoOdoConfig
 from aeronavis.models.slip import SlipClassifier, build_slip_model
-from aeronavis.models.visual_odo import VisualOdoNet, build_visual_odo
-from aeronavis.models.texture_gate import TextureGate, build_texture_gate
-from aeronavis.predict.model import PredictTransformer, build_predict_model
+from aeronavis.models.visual_odo import VisualOdoNet, build_visual_odo, VisualOdoConfig
+from aeronavis.models.texture_gate import TextureGate, build_texture_gate, TextureGateConfig
+from aeronavis.predict.model import (
+    PredictTransformer,
+    build_predict_model,
+    PredictTransformerConfig,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,12 +45,10 @@ CALIBRATION_SAMPLES = 200
 def load_model_checkpoint(model_class, checkpoint_path: Path, config: Config, device: str = "cpu"):
     """Load a model from checkpoint."""
     logger.info(f"Loading {model_class.__name__} from {checkpoint_path}")
-    torch.load(checkpoint_path, map_location="cpu")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
 
     # Determine which model class to use based on checkpoint structure
     if "model_state_dict" in checkpoint:
-        state_dict = checkpoint["model_state_dict"]
-    elif "model_state_dict" in checkpoint:
         state_dict = checkpoint["model_state_dict"]
     else:
         state_dict = checkpoint
@@ -323,7 +331,7 @@ def verify_tflite_parity(
                 )
 
             # TFLite forward
-            interpreter = tf.lite.Interpreter(model_path=str(model_path))
+            interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
             interpreter.allocate_tensors()
             for i, detail in enumerate(input_details):
                 interpreter.set_tensor(detail["index"], sample[key].astype(np.float32))
