@@ -331,7 +331,7 @@ def parse_osm_pbf(osm_path: Path, db_path: Path) -> Tuple[int, int, int]:
             # Insert way
             self.cursor.execute(
                 "INSERT OR REPLACE INTO ways (id, node_seq, tags, one_way) VALUES (?, ?, ?, ?)",
-                (w.id, str(node_ids), str(tags), int(one_way))
+                (w.id, str(node_ids), str(tags), int(one_way)),
             )
             self.ways_count += 1
 
@@ -348,7 +348,7 @@ def parse_osm_pbf(osm_path: Path, db_path: Path) -> Tuple[int, int, int]:
                 self.cursor.execute(
                     """INSERT INTO segments (n1, n2, length_m, bearing_deg, way_id, one_way)
                        VALUES (?, ?, ?, ?, ?, ?)""",
-                    (n1, n2, length, bearing, w.id, int(one_way))
+                    (n1, n2, length, bearing, w.id, int(one_way)),
                 )
                 self.segments_count += 1
 
