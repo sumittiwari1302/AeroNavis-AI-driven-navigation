@@ -14,7 +14,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 
 from aeronavis.config import get_config, Config
-from aeronavis.models.predict.model import build_predict_model
+from aeronavis.predict.model import build_predict_model
 from aeronavis.data.preprocess import NavSequence
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
