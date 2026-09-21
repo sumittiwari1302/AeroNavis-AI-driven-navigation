@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class NavState:
     """Navigation state with 3-sigma confidence bands."""
+
     ts: float
     x: float
     y: float
@@ -71,8 +72,8 @@ class InEKF:
         self.n_state = 10
         self.n_meas_gnss = 3  # x, y, psi
         self.n_meas_wheel = 1  # vx (forward speed)
-        self.n_meas_nhc = 2    # vy=0, vz=0 (NHC)
-        self.n_meas_vo = 3     # dx, dy, dpsi
+        self.n_meas_nhc = 2  # vy=0, vz=0 (NHC)
+        self.n_meas_vo = 3  # dx, dy, dpsi
 
         # State vector: [x, y, psi, vx, vy, bg_x, bg_y, ba_x, ba_y, s_wheel, s_vo]
         self.x = np.zeros(self.n_state)
@@ -83,16 +84,20 @@ class InEKF:
 
         # Measurement noise (base values, inflated by seeder/learned noise)
         self.R_gnss = self._build_R_gnss()
-        self.R_wheel = np.diag([self.fusion_cfg.wheel_speed_std ** 2])
-        self.R_nhc = np.diag([
-            self.fusion_cfg.wheel_nhc_std ** 2,
-            self.fusion_cfg.wheel_nhc_std ** 2,
-        ])
-        self.R_vo = np.diag([
-            self.fusion_cfg.vo_pos_std ** 2,
-            self.fusion_cfg.vo_pos_std ** 2,
-            self.fusion_cfg.vo_yaw_std ** 2,
-        ])
+        self.R_wheel = np.diag([self.fusion_cfg.wheel_speed_std**2])
+        self.R_nhc = np.diag(
+            [
+                self.fusion_cfg.wheel_nhc_std**2,
+                self.fusion_cfg.wheel_nhc_std**2,
+            ]
+        )
+        self.R_vo = np.diag(
+            [
+                self.fusion_cfg.vo_pos_std**2,
+                self.fusion_cfg.vo_pos_std**2,
+                self.fusion_cfg.vo_yaw_std**2,
+            ]
+        )
 
         # Numerical safety
         self.min_eig = self.fusion_cfg.min_eig
@@ -120,15 +125,22 @@ class InEKF:
     def _initialize_state(self):
         """Initialize filter state with small uncertainty."""
         self.x = np.zeros(self.n_state)
-        self.x[8] = 1.0   # s_wheel = 1.0
-        self.x[9] = 1.0   # s_vo = 1.0
-        self.P = np.diag([
-            1.0, 1.0, 0.01,      # x, y, psi
-            0.1, 0.1,            # vx, vy
-            1e-6,                # bg_z
-            1e-4, 1e-4,          # ba_x, ba_y
-            0.01, 0.01           # s_wheel, s_vo
-        ])
+        self.x[8] = 1.0  # s_wheel = 1.0
+        self.x[9] = 1.0  # s_vo = 1.0
+        self.P = np.diag(
+            [
+                1.0,
+                1.0,
+                0.01,  # x, y, psi
+                0.1,
+                0.1,  # vx, vy
+                1e-6,  # bg_z
+                1e-4,
+                1e-4,  # ba_x, ba_y
+                0.01,
+                0.01,  # s_wheel, s_vo
+            ]
+        )
 
     def _build_process_noise_continuous(self) -> np.ndarray:
         """Build continuous-time process noise matrix Qc (10x10)."""
@@ -150,11 +162,13 @@ class InEKF:
 
     def _build_R_gnss(self) -> np.ndarray:
         """Build GNSS measurement noise matrix."""
-        return np.diag([
-            self.fusion_cfg.gnss_pos_std ** 2,
-            self.fusion_cfg.gnss_pos_std ** 2,
-            (np.deg2rad(5.0)) ** 2  # 5 deg heading uncertainty
-        ])
+        return np.diag(
+            [
+                self.fusion_cfg.gnss_pos_std**2,
+                self.fusion_cfg.gnss_pos_std**2,
+                (np.deg2rad(5.0)) ** 2,  # 5 deg heading uncertainty
+            ]
+        )
 
     def _enforce_psd(self, P: np.ndarray) -> np.ndarray:
         """Ensure P is positive semi-definite."""
@@ -189,8 +203,7 @@ class InEKF:
     def _rodrigues(self, omega: np.ndarray, dt: float) -> np.ndarray:
         """Rodrigues formula for SO(2) attitude update."""
         theta = omega * dt
-        return np.array([[np.cos(theta), -np.sin(theta)],
-                         [np.sin(theta), np.cos(theta)]])
+        return np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
 
     def _wrap_angle(self, angle: float) -> float:
         """Wrap angle to [-pi, pi]."""
@@ -327,8 +340,9 @@ class InEKF:
         # delta_pose: [dx, dy, dpsi] in body frame
         # Transform to ENU using current heading
         _c, _s = np.cos(self.x[2]), np.sin(self.x[2])
-        R_b2n = np.array([[np.cos(self.x[2]), -np.sin(self.x[2])],
-                          [np.sin(self.x[2]), np.cos(self.x[2])]])
+        R_b2n = np.array(
+            [[np.cos(self.x[2]), -np.sin(self.x[2])], [np.sin(self.x[2]), np.cos(self.x[2])]]
+        )
         delta_enu = R_b2n @ delta_pose[:2]
         delta_psi = delta_pose[2]
 
@@ -365,7 +379,7 @@ class InEKF:
         self._last_good_pose = {
             "position": self.x[:2].copy(),
             "heading": self.x[2],
-            "timestamp": time.time() if 'time' in globals() else 0.0,
+            "timestamp": time.time() if "time" in globals() else 0.0,
         }
 
     def handover(self, gnss_pose: np.ndarray, blend_s: float):
@@ -389,9 +403,13 @@ class InEKF:
         """Return current state with 3-sigma bounds."""
         np.sqrt(np.maximum(np.diag(self.P), 0))
         return NavState(
-            ts=time.time() if 'time' in globals() else 0.0,
-            x=self.x[0], y=self.x[1], z=self.x[0],  # z=0 for SE(2)
-            vx=self.x[3], vy=self.x[4], vz=0.0,
+            ts=time.time() if "time" in globals() else 0.0,
+            x=self.x[0],
+            y=self.x[1],
+            z=self.x[0],  # z=0 for SE(2)
+            vx=self.x[3],
+            vy=self.x[4],
+            vz=0.0,
             yaw=self.x[2],
             std_x=np.sqrt(max(self.P[0, 0], 0)),
             std_y=np.sqrt(max(self.P[1, 1], 0)),
@@ -400,8 +418,12 @@ class InEKF:
             std_vy=np.sqrt(max(self.P[4, 4], 0)),
             std_vz=0.0,
             std_yaw=np.sqrt(max(self.P[2, 2], 0)),
-            source_health={"gnss": not self._outage_active, "wheel": True,
-                          "vo": True, "velocity": True},
+            source_health={
+                "gnss": not self._outage_active,
+                "wheel": True,
+                "vo": True,
+                "velocity": True,
+            },
         )
 
     def covariance(self) -> np.ndarray:
@@ -412,7 +434,7 @@ class InEKF:
         try:
             la.inv(S)
             mahal = y.T @ la.inv(S) @ y
-            return mahal > self.residual_gate ** 2
+            return mahal > self.residual_gate**2
         except la.LinAlgError:
             return True  # Skip if S is singular
 
@@ -420,6 +442,7 @@ class InEKF:
 # ============================================================================
 # WHEEL MEASUREMENT DATACLASS (from Part 3)
 # ============================================================================
+
 
 @dataclass
 class WheelMeasurement:
@@ -429,8 +452,3 @@ class WheelMeasurement:
     vz_body: float = 0.0
     R_diag: np.ndarray = None
     gate: str = "full"  # "full", "low", "zupt"
-
-
-
-
-

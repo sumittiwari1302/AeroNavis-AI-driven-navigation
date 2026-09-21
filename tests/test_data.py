@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from aeronavis.config import Config
+from aeronavis.config import Config, AppConfig, MapMatchConfig, RanchorConfig
 from aeronavis.data.downloader import SelfCollectedHandler
 from aeronavis.data.preprocess import NavSequence, _resample_poly_df
 from aeronavis.data.splits import leakage_sources, make_splits
@@ -17,6 +17,22 @@ logging.basicConfig(level=logging.ERROR)
 def test_self_collected_handler_idempotent(tmp_path):
     """Downloader runs twice without error and guide/schema are stable."""
     cfg = Config(
+        app=AppConfig(offline=True, map_candidate_radius=25.0, map_viterbi_window=20),
+        mapmatch=MapMatchConfig(
+            candidate_radius=25.0,
+            viterbi_window=20,
+            emission_gps_weight=1.0,
+            emission_heading_weight=0.5,
+            transition_speed_weight=1.0,
+            gnss_health_threshold=0.7,
+        ),
+        ranchor=RanchorConfig(
+            reacquire_threshold=5.0,
+            converge_window_s=3.0,
+            blend_s=5.0,
+            max_jump_m=0.5,
+            consecutive_good=3,
+        ),
         sensor=None,
         model=None,
         texture=None,
@@ -126,6 +142,22 @@ def make_synth_seq(seq_id, source, drive_id, hours=1.0, has_gnss=True) -> NavSeq
 def test_split_leakage():
     """No drive_id appears in more than one split."""
     cfg = Config(
+        app=AppConfig(offline=True, map_candidate_radius=25.0, map_viterbi_window=20),
+        mapmatch=MapMatchConfig(
+            candidate_radius=25.0,
+            viterbi_window=20,
+            emission_gps_weight=1.0,
+            emission_heading_weight=0.5,
+            transition_speed_weight=1.0,
+            gnss_health_threshold=0.7,
+        ),
+        ranchor=RanchorConfig(
+            reacquire_threshold=5.0,
+            converge_window_s=3.0,
+            blend_s=5.0,
+            max_jump_m=0.5,
+            consecutive_good=3,
+        ),
         sensor=None,
         model=None,
         texture=None,
@@ -154,6 +186,22 @@ def test_split_leakage():
 def test_split_ratios_approximate():
     """Split counts roughly follow 70/15/15."""
     cfg = Config(
+        app=AppConfig(offline=True, map_candidate_radius=25.0, map_viterbi_window=20),
+        mapmatch=MapMatchConfig(
+            candidate_radius=25.0,
+            viterbi_window=20,
+            emission_gps_weight=1.0,
+            emission_heading_weight=0.5,
+            transition_speed_weight=1.0,
+            gnss_health_threshold=0.7,
+        ),
+        ranchor=RanchorConfig(
+            reacquire_threshold=5.0,
+            converge_window_s=3.0,
+            blend_s=5.0,
+            max_jump_m=0.5,
+            consecutive_good=3,
+        ),
         sensor=None,
         model=None,
         texture=None,
@@ -189,6 +237,22 @@ def test_self_collected_importer(tmp_path):
     """Synthetic self-collected run parses without NaN."""
 
     cfg = Config(
+        app=AppConfig(offline=True, map_candidate_radius=25.0, map_viterbi_window=20),
+        mapmatch=MapMatchConfig(
+            candidate_radius=25.0,
+            viterbi_window=20,
+            emission_gps_weight=1.0,
+            emission_heading_weight=0.5,
+            transition_speed_weight=1.0,
+            gnss_health_threshold=0.7,
+        ),
+        ranchor=RanchorConfig(
+            reacquire_threshold=5.0,
+            converge_window_s=3.0,
+            blend_s=5.0,
+            max_jump_m=0.5,
+            consecutive_good=3,
+        ),
         sensor=None,
         model=None,
         texture=None,

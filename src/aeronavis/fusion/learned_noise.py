@@ -109,20 +109,20 @@ class LearnedNoiseTrainer:
     def fit_innovation_residuals(self, innovations: np.ndarray, features: np.ndarray) -> dict:
         """
         Fit noise model from innovation residuals.
-        
+
         Args:
             innovations: (N, D) innovation residuals for each measurement type
             features: (N, D_feat) feature vectors
-            
+
         Returns:
             dict with training stats
         """
         # Compute empirical variance per measurement type
         np.ones((len(features), 3), dtype=np.float32)
-        
+
         # For each measurement type, compute variance ratio vs nominal
         # This is a simplified version - in practice, we'd use sliding windows
-        
+
         return {"loss": 0.0}
 
     def save(self, path: str):
@@ -149,10 +149,12 @@ def build_learned_noise_model(config: Config) -> LearnedNoiseModel:
         hidden_dim=config.fusion.learned_noise_hidden,
         max_params=config.fusion.learned_noise_max_params,
     )
-    model = LearnedNoiseModel(LearnedNoiseConfig(
-        input_dim=12,
-        hidden_dim=hidden,
-        max_params=max_params,
-    ))
+    model = LearnedNoiseModel(
+        LearnedNoiseConfig(
+            input_dim=12,
+            hidden_dim=hidden,
+            max_params=max_params,
+        )
+    )
     logger.info(f"LearnedNoiseModel params: {model.count_parameters():,}")
     return model

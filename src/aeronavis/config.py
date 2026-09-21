@@ -105,6 +105,32 @@ class DataConfig:
 
 
 @dataclass(frozen=True)
+class AppConfig:
+    offline: bool
+    map_candidate_radius: float
+    map_viterbi_window: int
+
+
+@dataclass(frozen=True)
+class MapMatchConfig:
+    candidate_radius: float
+    viterbi_window: int
+    emission_gps_weight: float
+    emission_heading_weight: float
+    transition_speed_weight: float
+    gnss_health_threshold: float
+
+
+@dataclass(frozen=True)
+class RanchorConfig:
+    reacquire_threshold: float
+    converge_window_s: float
+    blend_s: float
+    max_jump_m: float
+    consecutive_good: int
+
+
+@dataclass(frozen=True)
 class SplitsConfig:
     train_ratio: float
     val_ratio: float
@@ -117,6 +143,7 @@ class PathsConfig:
     splits: str
     models: str
     benchmarks: str
+    maps: str
 
 
 @dataclass(frozen=True)
@@ -130,6 +157,9 @@ class Config:
     data: DataConfig
     splits: SplitsConfig
     adaptation: AdaptationConfig
+    app: AppConfig
+    mapmatch: MapMatchConfig
+    ranchor: RanchorConfig
     seed: int
 
 
@@ -145,6 +175,9 @@ GROUP_PREFIX: dict[type, str] = {
     DataConfig: "data",
     SplitsConfig: "splits",
     AdaptationConfig: "adaptation",
+    AppConfig: "app",
+    MapMatchConfig: "mapmatch",
+    RanchorConfig: "ranchor",
 }
 
 

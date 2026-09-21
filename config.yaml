@@ -113,6 +113,39 @@ paths.processed: data/processed
 paths.splits: data/splits
 paths.models: models
 paths.benchmarks: benchmarks
+paths.maps: data/maps
+
+# --- app: offline maps -------------------------------------------------------
+# Offline OSM road graph (imported once, used offline)
+app.offline: true
+app.map_candidate_radius: 25.0
+app.map_viterbi_window: 20
+
+# --- app: map-matching -------------------------------------------------------
+# Hidden-Markov Viterbi snap to road segments
+mapmatch.candidate_radius: 25.0
+mapmatch.viterbi_window: 20
+mapmatch.emission_gps_weight: 1.0
+mapmatch.emission_heading_weight: 0.5
+mapmatch.transition_speed_weight: 1.0
+mapmatch.gnss_health_threshold: 0.7
+
+# --- app: re-anchor ----------------------------------------------------------
+# Re-anchor state machine: DROPPED -> COASTING -> REACQUIRING -> REANCHORED
+ranchor.reacquire_threshold: 5.0
+ranchor.converge_window_s: 3.0
+ranchor.blend_s: 5.0
+ranchor.max_jump_m: 0.5
+ranchor.consecutive_good: 3
+
+# --- paths (continued) -------------------------------------------------------
+# Canonical artifacts locations; kept relative to the repo root.
+paths.raw: data/raw
+paths.processed: data/processed
+paths.splits: data/splits
+paths.models: models
+paths.benchmarks: benchmarks
+paths.maps: data/maps
 
 # --- runtime ----------------------------------------------------------------
 seed: 42

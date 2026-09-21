@@ -28,7 +28,7 @@ def umeyama_alignment(src: np.ndarray, dst: np.ndarray) -> tuple:
     src_c = src - mu_src
     dst_c = dst - mu_dst
 
-    var_src = np.sum(src_c ** 2) / len(src)
+    var_src = np.sum(src_c**2) / len(src)
     if var_src < 1e-10:
         return np.eye(3), 1.0, np.zeros(3)
 
@@ -68,8 +68,8 @@ def compute_ate_windows(
             continue
         ates = []
         for i in range(0, len(pred) - w_samples + 1, w_samples // 2):
-            p_win = pred[i:i + w_samples]
-            g_win = gt[i:i + w_samples]
+            p_win = pred[i : i + w_samples]
+            g_win = gt[i : i + w_samples]
             if len(p_win) < 2:
                 continue
             ate = compute_ate(p_win, g_win)
