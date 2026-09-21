@@ -1,0 +1,25 @@
+{
+  "sequence_id": "io_vnbd_S-Vta12_1",
+  "schedule": [
+    {
+      "distance_m": 100.0,
+      "duration_s": 10.0
+    },
+    {
+      "distance_m": 200.0,
+      "duration_s": 10.0
+    },
+    {
+      "distance_m": 300.0,
+      "duration_s": 10.0
+    }
+  ],
+  "baselines": {
+    "navx_full": "BaselineResult(method='navx_full', sequence_id='io_vnbd_S-Vta12_1', ate_overall=274.6307475420545, ate_60s=411.94612131308185, ate_blackout=411.94612131308185, drift_pct_km=45.27402247674581, covariance_growth=1.0, jump_at_reacquisition=0.0)",
+    "frozen_lstm": "BaselineResult(method='frozen_lstm', sequence_id='io_vnbd_S-Vta12_1', ate_overall=274.6307475420545, ate_60s=411.94612131308185, ate_blackout=411.94612131308185, drift_pct_km=45.27402247674581, covariance_growth=1.0, jump_at_reacquisition=0.0)",
+    "nhc_only": "BaselineResult(method='nhc_only', sequence_id='io_vnbd_S-Vta12_1', ate_overall=274.6307475420545, ate_60s=411.94612131308185, ate_blackout=411.94612131308185, drift_pct_km=45.27402247674581, covariance_growth=1.0, jump_at_reacquisition=0.0)",
+    "pure_ins": "BaselineResult(method='pure_ins', sequence_id='io_vnbd_S-Vta12_1', ate_overall=274.6307475420545, ate_60s=411.94612131308185, ate_blackout=411.94612131308185, drift_pct_km=45.27402247674581, covariance_growth=1.0, jump_at_reacquisition=0.0)"
+  },
+  "best_method": "navx_full",
+  "summary": "navx_full: ATE=411.95m, drift=45.3%/km; frozen_lstm: ATE=411.95m, drift=45.3%/km; nhc_only: ATE=411.95m, drift=45.3%/km; pure_ins: ATE=411.95m, drift=45.3%/km | Best: navx_full"
+}

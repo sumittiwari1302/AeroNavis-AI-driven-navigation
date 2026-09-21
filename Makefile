@@ -15,6 +15,7 @@ lint:
 
 test:
 	.venv/bin/pytest -q
+	bash scripts/ci_budget.sh
 
 bench:
 	@echo "=== NAV-X 3.0 Benchmark Suite ==="
