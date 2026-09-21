@@ -65,6 +65,21 @@ class TextureConfig:
 @dataclass(frozen=True)
 class FusionConfig:
     reseed_jump_max_m: float
+    proc_noise_gyro_bias: float
+    proc_noise_accel_bias: float
+    proc_noise_gyro: float
+    proc_noise_accel: float
+    gnss_pos_std: float
+    gnss_vel_std: float
+    wheel_speed_std: float
+    wheel_nhc_std: float
+    vo_pos_std: float
+    vo_yaw_std: float
+    learned_noise_hidden: int
+    learned_noise_max_params: int
+    min_eig: float
+    psd_inflation_factor: float
+    residual_gate_sigma: float
 
 
 @dataclass(frozen=True)

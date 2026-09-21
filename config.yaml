@@ -55,6 +55,25 @@ texture.threshold.medium: 400.0
 # --- fusion -----------------------------------------------------------------
 # Below this displacement a GNSS fix is treated as stationary, not a reseed.
 fusion.reseed_jump_max_m: 0.3
+# Process noise (continuous-time, diagonal)
+fusion.proc_noise_gyro_bias: 0.000001
+fusion.proc_noise_accel_bias: 0.0001
+fusion.proc_noise_gyro: 0.0001
+fusion.proc_noise_accel: 0.0001
+# Measurement noise (diagonal, will be inflated by seeder/learned noise)
+fusion.gnss_pos_std: 0.5
+fusion.gnss_vel_std: 0.5
+fusion.wheel_speed_std: 0.1
+fusion.wheel_nhc_std: 0.05
+fusion.vo_pos_std: 0.5
+fusion.vo_yaw_std: 0.05
+# Learned noise MLP
+fusion.learned_noise_hidden: 64
+fusion.learned_noise_max_params: 50000
+# Numerical safety
+fusion.min_eig: 0.000000000001
+fusion.psd_inflation_factor: 1.5
+fusion.residual_gate_sigma: 6.0
 
 # --- predict ----------------------------------------------------------------
 # Outage forecaster emits success probabilities at these look-ahead horizons.
