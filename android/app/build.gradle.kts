@@ -17,9 +17,6 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        
-        // No network access at runtime
-        setProperty("android.net.INTERNET_PERMISSION", "false")
     }
 
     buildFeatures {
@@ -47,12 +44,7 @@ android {
         }
     }
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    packagingOptions {
+    packaging {
         resources {
             excludes += "/META-INF/*"
         }
@@ -62,12 +54,6 @@ android {
                 "libtensorflowlite_jni.so",
                 "libtensorflowlite_gpu_jni.so"
             )
-        }
-    }
-
-    packaging {
-        resources {
-            excludes += "/META-INF/*"
         }
     }
 }
@@ -97,14 +83,6 @@ dependencies {
     implementation(libs.cameraXView)
     implementation(libs.cameraXLifecycle)
     
-    // TensorFlow Lite
-    implementation(libs.tflite)
-    implementation(libs.tfliteGpu)
-    
-    // Room
-    implementation(libs.roomRuntime)
-    kapt(libs.roomCompiler)
-    
     // OKHttp for any needed networking (though offline mode enforced)
     implementation(libs.okhttp)
     
@@ -120,11 +98,7 @@ dependencies {
     androidTestImplementation(libs.junitRules)
 }
 
-kapt {
-    correctErrorTypes = true
-}
-
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     kotlinOptions {
         freeCompilerArgs = listOf("-Xopt-in=kotlin.RequiresOptIn")
     }

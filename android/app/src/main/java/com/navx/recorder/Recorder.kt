@@ -86,20 +86,20 @@ class Recorder(
     
     suspend fun logImu(tsMs: Long, accX: Float, accY: Float, accZ: Float,
                        gyrX: Float, gyrY: Float, gyrZ: Float) {
-        imuWriter?.write("$timestamp,$accX,$accY,$accZ,$gyrX,$gyrY,$gyrZ\n")
+        imuWriter?.write("$tsMs,$accX,$accY,$accZ,$gyrX,$gyrY,$gyrZ\n")
     }
     
     suspend fun logMag(tsMs: Long, x: Float, y: Float, z: Float) {
-        magWriter?.write("$timestamp,$x,$y,$z\n")
+        magWriter?.write("$tsMs,$x,$y,$z\n")
     }
     
     suspend fun logBaro(tsMs: Long, pressure: Float) {
-        baroWriter?.write("$timestamp,$pressure\n")
+        baroWriter?.write("$tsMs,$pressure\n")
     }
     
     suspend fun logGnss(tsMs: Long, lat: Double, lon: Double, alt: Double,
                         speed: Float, heading: Float, pdop: Float, cno: Float) {
-        gnssWriter?.write("$timestamp,$lat,$lon,$alt,$speed,$heading,$pdop,$cno\n")
+        gnssWriter?.write("$tsMs,$lat,$lon,$alt,$speed,$heading,$pdop,$cno\n")
     }
     
     suspend fun logEvent(type: String, details: String) {

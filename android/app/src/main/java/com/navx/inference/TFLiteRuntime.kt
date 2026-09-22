@@ -14,7 +14,15 @@ import java.nio.ByteOrder
  */
 object TFLiteRuntime {
     private const val TAG = "TFLiteRuntime"
-    
+
+    /** Model file names in assets */
+    const val MODEL_VELOCITY = "velocity.tflite"
+    const val MODEL_PSEUDO_ODO = "pseudo_odo.tflite"
+    const val MODEL_SLIP = "slip.tflite"
+    const val MODEL_VISUAL_ODO = "visual_odo.tflite"
+    const val MODEL_TEXTURE_GATE = "texture_gate.tflite"
+    const val MODEL_FORECASTER = "forecaster.tflite"
+
     /** Supported hardware delegates */
     enum class Delegate {
         CPU,
@@ -63,7 +71,7 @@ object TFLiteRuntime {
         
         return Interpreter(modelFile, options)
     }
-    
+
     private fun copyFromAssets(context: Context, modelPath: String) {
         val inputStream = context.assets.open(modelPath)
         val outputFile = java.io.File(context.filesDir, modelPath)
@@ -72,18 +80,6 @@ object TFLiteRuntime {
         inputStream.copyTo(outputStream)
         inputStream.close()
         outputStream.close()
-    }
-    
-    companion object {
-        private const val TAG = "TFLiteRuntime"
-        
-        /** Model file names in assets */
-        const val MODEL_VELOCITY = "velocity.tflite"
-        const val MODEL_PSEUDO_ODO = "pseudo_odo.tflite"
-        const val MODEL_SLIP = "slip.tflite"
-        const val MODEL_VISUAL_ODO = "visual_odo.tflite"
-        const val MODEL_TEXTURE_GATE = "texture_gate.tflite"
-        const val MODEL_FORECASTER = "forecaster.tflite"
     }
 }
 
@@ -128,13 +124,13 @@ abstract class TFLiteModel(
      * Run inference with multiple inputs.
      */
     fun runMulti(inputs: Array<FloatArray>): FloatArray {
-        val inputBuffers = inputs.mapIndexed { i, input ->
-            ByteBuffer.allocateDirect(inputShape[i].fold(1) { acc, dim -> acc * dim } * 4)
-                .order(ByteOrder.nativeOrder()).apply { put(input[i]).rewind() }
-        }.toArray()
-        
-        interpreter.runForMultipleInputsOutputs(inputBuffers, outputBuffer)
-        
+        val inputBuffers: Array<ByteBuffer> = inputs.map { input ->
+            ByteBuffer.allocateDirect(input.size * 4)
+                .order(ByteOrder.nativeOrder()).apply { asFloatBuffer().put(input).rewind() }
+        }.toTypedArray()
+
+        interpreter.runForMultipleInputsOutputs(inputBuffers, mapOf(0 to outputBuffer))
+
         val outputArray = FloatArray(outputShape.reduce { acc, dim -> acc * dim })
         outputBuffer.rewind()
         outputBuffer.asFloatBuffer().get(outputArray)
@@ -246,12 +242,14 @@ class SlipClassifier(
         GRIP, SLIP_BRAKE, STATIONARY
     }
     
-    fun run(imuWindow: FloatArray): Int {  // Returns class index
+    fun classify(imuWindow: FloatArray): Int {  // Returns class index
         val output = run(imuWindow)
-        return output.maxIndexOrNull() ?: 0
+        var best = 0
+        for (i in 1 until output.size) if (output[i] > output[best]) best = i
+        return best
     }
-    
-    fun runWithProbs(imuWindow: FloatArray): FloatArray {
+
+    fun predictProbs(imuWindow: FloatArray): FloatArray {
         return run(imuWindow)
     }
 }
@@ -279,19 +277,16 @@ class TextureGate(
         RICH, MEDIUM, POOR
     }
     
-    fun run(image96x96: ByteArray): Pair<Int, Float> {  // Returns (class, confidence)
+    fun classify(image96x96: ByteArray): Pair<Int, Float> {  // Returns (class, confidence)
         val input = FloatArray(INPUT_SIZE * INPUT_SIZE)
-        for (i in image.indices) {
-            input[i] = image[i].toFloat() / 255.0f
+        for (i in image96x96.indices) {
+            input[i] = image96x96[i].toFloat() / 255.0f
         }
-        val output = run(image.map { it.toFloat() / 255.0f }.toFloatArray())
-        val classIdx = output.maxIndexOrNull() ?: 0
-        val confidence = output.maxOrNull() ?: 0f
-        return Pair(classIdx, confidence)
-    }
-    
-    companion object {
-        const val INPUT_SIZE = 96
+        val output = run(image96x96.map { it.toFloat() / 255.0f }.toFloatArray())
+        var best = 0
+        for (i in 1 until output.size) if (output[i] > output[best]) best = i
+        val confidence = output[best]
+        return Pair(best, confidence)
     }
 }
 
@@ -315,7 +310,7 @@ class VisualOdoModel(
         const val INPUT_WIDTH = 224
     }
     
-    fun run(prevFrame: ByteArray, currFrame: ByteArray): FloatArray {
+    fun track(prevFrame: ByteArray, currFrame: ByteArray): FloatArray {
         // Input: [prev_frame, curr_frame] each 224x224 grayscale
         val input = FloatArray(2 * INPUT_HEIGHT * INPUT_WIDTH)
         for (i in 0 until INPUT_HEIGHT * INPUT_WIDTH) {
@@ -323,11 +318,6 @@ class VisualOdoModel(
             input[i + INPUT_HEIGHT * INPUT_WIDTH] = currFrame[i].toFloat() / 255.0f
         }
         return run(input)
-    }
-    
-    companion object {
-        const val INPUT_HEIGHT = 224
-        const val INPUT_WIDTH = 224
     }
 }
 
@@ -346,5 +336,4 @@ class ForecasterModel(
     inputType = Float::class.java,
     outputType = Float::class.java
 ) {
-    fun run(features: FloatArray): FloatArray = run(features)
 }

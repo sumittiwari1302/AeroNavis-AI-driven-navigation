@@ -2,6 +2,7 @@ package com.navx.fusion
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.navx.inference.VelocityModel
 
 /**
  * Online adaptation engine for test-time adaptation (Part 5).
@@ -47,7 +48,6 @@ class AdaptationEngine(
     private var baseLoss = Float.POSITIVE_INFINITY
     private var patienceCounter = 0
     var bestValLoss = Float.POSITIVE_INFINITY
-    var patienceCounter = 0
     
     // LoRA parameters (simplified - in production use proper LoRA layers)
     private var loraA: FloatArray = FloatArray(0)
@@ -77,7 +77,7 @@ class AdaptationEngine(
         
         // Update base loss estimate
         if (baseLoss == Float.POSITIVE_INFINITY) {
-            baseLoss = lossWindow.average()
+            baseLoss = lossWindow.average().toFloat()
         }
         
         // Check freeze condition
@@ -89,7 +89,7 @@ class AdaptationEngine(
         }
         
         // Kill switch on GNSS residual
-        if (gnssResidualCount >= 3) {
+        if (state.value.gnssResidualCount >= 3) {
             // Revert to snapshot
         }
         

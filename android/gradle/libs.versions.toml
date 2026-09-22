@@ -3,11 +3,11 @@ agp = "8.3.0"
 kotlin = "1.9.20"
 coreKtx = "1.12.0"
 lifecycle = "2.7.0"
-material3 = "1.1.1"
-maplibre = "11.5.0"
-tflite = "2.16.0"
-tfliteGpu = "2.16.0"
-multik = "0.5.0"
+material3 = "1.12.0"
+maplibre = "11.11.0"
+tflite = "2.14.0"
+tfliteGpu = "2.14.0"
+multik = "0.1.1"
 kotlinxCoroutines = "1.7.3"
 kotlinxSerialization = "1.6.0"
 okhttp = "4.12.0"
@@ -19,40 +19,40 @@ junitJupiter = "5.10.1"
 espresso = "3.5.1"
 truth = "1.1.5"
 robolectric = "4.11"
+junitRunner = "1.5.2"
 
 [libraries]
-agp = { module = "com.android.tools.build", name = "gradle", version.ref = "agp" }
-kotlin = { module = "org.jetbrains.kotlin", name = "kotlin-gradle-plugin", version.ref = "kotlin" }
-coreKtx = { module = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
-lifecycleRuntime = { module = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
-lifecycleViewModel = { module = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
-material3 = { module = "com.google.android.material", name = "material", version.ref = "material3" }
-maplibre = { module = "org.maplibre.gl", name = "maplibre-gl", version.ref = "maplibre" }
-tflite = { module = "org.tensorflow", name = "tensorflow-lite", version.ref = "tflite" }
-tfliteGpu = { module = "org.tensorflow", name = "tensorflow-lite-gpu", version.ref = "tfliteGpu" }
-multik = { module = "org.jetbrains.kotlinx", name = "multik", version.ref = "multik" }
-kotlinxCoroutinesCore = { module = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
-kotlinxCoroutinesAndroid = { module = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
-kotlinxSerialization = { module = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
-okhttp = { module = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
-roomRuntime = { module = "androidx.room", name = "room-runtime", version.ref = "room" }
-roomCompiler = { module = "androidx.room", name = "room-compiler", version.ref = "room" }
-cameraXCore = { module = "androidx.camera", name = "camera-core", version.ref = "cameraX" }
-cameraXCamera2 = { module = "androidx.camera", name = "camera-camera2", version.ref = "cameraX" }
-cameraXView = { module = "androidx.camera", name = "camera-view", version.ref = "cameraX" }
-cameraXLifecycle = { module = "androidx.camera", name = "camera-lifecycle", version.ref = "cameraX" }
-mlkitVision = { module = "com.google.mlkit", name = "vision", version.ref = "mlkit" }
-junit = { module = "junit", name = "junit", version.ref = "junit" }
-junitJupiter = { module = "org.junit.jupiter", name = "junit-jupiter", version.ref = "junitJupiter" }
-espressoCore = { module = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }
-truth = { module = "com.google.truth", name = "truth", version.ref = "truth" }
-robolectric = { module = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
-junitRunner = { module = "androidx.test", name = "runner", version.ref = "1.5.2" }
-junitRules = { module = "androidx.test", name = "rules", version.ref = "1.5.2" }
+agp = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+kotlin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+coreKtx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
+lifecycleRuntime = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
+lifecycleViewModel = { module = "androidx.lifecycle:lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
+material3 = { module = "com.google.android.material:material", version.ref = "material3" }
+maplibre = { module = "org.maplibre.gl:android-sdk", version.ref = "maplibre" }
+tflite = { module = "org.tensorflow:tensorflow-lite", version.ref = "tflite" }
+tfliteGpu = { module = "org.tensorflow:tensorflow-lite-gpu", version.ref = "tfliteGpu" }
+multik = { module = "org.jetbrains.kotlinx:multik-jvm", version.ref = "multik" }
+kotlinxCoroutinesCore = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
+kotlinxCoroutinesAndroid = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
+kotlinxSerialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+roomRuntime = { module = "androidx.room:room-runtime", version.ref = "room" }
+roomCompiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+cameraXCore = { module = "androidx.camera:camera-core", version.ref = "cameraX" }
+cameraXCamera2 = { module = "androidx.camera:camera-camera2", version.ref = "cameraX" }
+cameraXView = { module = "androidx.camera:camera-view", version.ref = "cameraX" }
+cameraXLifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "cameraX" }
+mlkitVision = { module = "com.google.mlkit:vision", version.ref = "mlkit" }
+junit = { module = "junit:junit", version.ref = "junit" }
+junitJupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junitJupiter" }
+espressoCore = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
+truth = { module = "com.google.truth:truth", version.ref = "truth" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+junitRunner = { module = "androidx.test:runner", version.ref = "junitRunner" }
+junitRules = { module = "androidx.test:rules", version.ref = "junitRunner" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
 kotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 kotlinParceable = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }
-room = { id = "androidx.room", version.ref = "room" }

@@ -5,13 +5,10 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
 import androidx.lifecycle.LifecycleOwner
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.Flow
 
 /**
  * Central sensor hub that coordinates all sensor inputs.
@@ -22,75 +19,114 @@ class SensorHub(
     private val lifecycleOwner: LifecycleOwner
 ) {
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    
+
     // Ring buffers for each sensor (100Hz = 100 samples per second)
     private val ACCEL_BUFFER_SIZE = 1000  // 10 seconds
     private val GYRO_BUFFER_SIZE = 1000
     private val MAG_BUFFER_SIZE = 500     // 50Hz
     private val BARO_BUFFER_SIZE = 250    // 25Hz
     private val GNSS_BUFFER_SIZE = 100    // 1Hz
-    
+
     // Ring buffers (pre-allocated arrays)
     private val accelBuffer = Array(ACCEL_BUFFER_SIZE) { FloatArray(3) }
     private val gyroBuffer = Array(GYRO_BUFFER_SIZE) { FloatArray(3) }
     private val magBuffer = Array(MAG_BUFFER_SIZE) { FloatArray(3) }
     private val baroBuffer = Array(BARO_BUFFER_SIZE) { FloatArray(1) }
     private val gnssBuffer = Array(GNSS_BUFFER_SIZE) { FloatArray(7) } // lat, lon, alt, speed, heading, pdop, cno
-    
+
     private var accelHead = 0
     private var gyroHead = 0
     private var magHead = 0
     private var baroHead = 0
     private var gnssHead = 0
-    
-    // Camera image analysis
-    private var cameraExecutor: ImageAnalysis? = null
-    private var latestFrame: ByteArray? = null
-    
-    // Output channel for fused sensor data at 100Hz
-    private val dataChannel = Channel<NavDataFrame>(100)
-    val dataFlow = dataChannel.receiveAsFlow()
-    
-    // Sensor listeners
-    private val accelListener = SensorEventListener { event ->
-        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-            accelBuffer[accelHead] = event.values.map { it }.toFloatArray()
-            accelHead = (accelHead + 1) % ACCEL_BUFFER_SIZE
+
+    // Output flow for fused sensor data at 100Hz
+    private val dataFlowMutable = MutableStateFlow(emptyFrame())
+    val dataFlow: Flow<NavDataFrame> = dataFlowMutable.asStateFlow()
+
+    private val accelListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+                accelBuffer[accelHead] = event.values.copyOf()
+                accelHead = (accelHead + 1) % ACCEL_BUFFER_SIZE
+                emitFrameIfReady()
+            }
         }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
     }
-    
-    private val gyroListener = SensorEventListener { event ->
-        if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
-            gyroBuffer[gyroHead] = event.values.map { it }.toFloatArray()
-            gyroHead = (gyroHead + 1) % GYRO_BUFFER_SIZE
+
+    private val gyroListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            if (event.sensor.type == Sensor.TYPE_GYROSCOPE) {
+                gyroBuffer[gyroHead] = event.values.copyOf()
+                gyroHead = (gyroHead + 1) % GYRO_BUFFER_SIZE
+            }
         }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
     }
-    
-    private val magListener = SensorEventListener { event ->
-        if (event.sensor.type == Sensor.TYPE_MAGNETIC_FIELD) {
-            magBuffer[magHead] = event.values.map { it }.toFloatArray()
-            magHead = (magHead + 1) % MAG_BUFFER_SIZE
+
+    private val magListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            if (event.sensor.type == Sensor.TYPE_MAGNETIC_FIELD) {
+                magBuffer[magHead] = event.values.copyOf()
+                magHead = (magHead + 1) % MAG_BUFFER_SIZE
+            }
         }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
     }
-    
-    private val baroListener = SensorEventListener { event ->
-        if (event.sensor.type == Sensor.TYPE_PRESSURE) {
-            baroBuffer[baroHead][0] = event.values[0]
-            baroHead = (baroHead + 1) % BARO_BUFFER_SIZE
+
+    private val baroListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            if (event.sensor.type == Sensor.TYPE_PRESSURE) {
+                baroBuffer[baroHead][0] = event.values[0]
+                baroHead = (baroHead + 1) % BARO_BUFFER_SIZE
+            }
         }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
     }
-    
-    // Camera image analysis
-    private val imageAnalyzer = ImageAnalysis.Builder()
-        .setTargetResolution(android.util.Size(96, 96))
-        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-        .build()
-        .also { it.setAnalyzer(lifecycleOwner, ImageAnalysis.Analyzer { imageProxy ->
-            val buffer = ByteArray(imageProxy.width * imageProxy.height)
-            imageProxy.getPlanes()[0].buffer.get(buffer)
-            latestFrame = buffer
-            imageProxy.close()
-        })
+
+    private var accelStore = accelBuffer[0].copyOf()
+    private var gyroStore = gyroBuffer[0].copyOf()
+
+    private fun emitFrameIfReady() {
+        if (gyroHead == 0) return
+        accelStore = accelBuffer[(accelHead - 1 + ACCEL_BUFFER_SIZE) % ACCEL_BUFFER_SIZE].copyOf()
+        gyroStore = gyroBuffer[(gyroHead - 1 + GYRO_BUFFER_SIZE) % GYRO_BUFFER_SIZE].copyOf()
+        dataFlowMutable.value = NavDataFrame(
+            timestamp = System.currentTimeMillis(),
+            accel = accelStore,
+            gyro = gyroStore,
+            mag = (magBuffer[(magHead - 1 + MAG_BUFFER_SIZE) % MAG_BUFFER_SIZE]).copyOf(),
+            baro = (baroBuffer[(baroHead - 1 + BARO_BUFFER_SIZE) % BARO_BUFFER_SIZE]).copyOf(),
+            gnss = if (gnssHead > 0) gnssBuffer[(gnssHead - 1 + GNSS_BUFFER_SIZE) % GNSS_BUFFER_SIZE].copyOf() else null,
+            cameraFrame = null
+        )
+    }
+
+    private fun emptyFrame(): NavDataFrame = NavDataFrame(
+        timestamp = 0L,
+        accel = FloatArray(3),
+        gyro = FloatArray(3),
+        mag = FloatArray(3),
+        baro = FloatArray(1),
+        gnss = null,
+        cameraFrame = null
+    )
+
+    fun start() {
+        sensorManager.registerListener(accelListener, sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER), SensorManager.SENSOR_DELAY_GAME)
+        sensorManager.registerListener(gyroListener, sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE), SensorManager.SENSOR_DELAY_GAME)
+        sensorManager.registerListener(magListener, sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD), SensorManager.SENSOR_DELAY_UI)
+        sensorManager.registerListener(baroListener, sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE), SensorManager.SENSOR_DELAY_UI)
+    }
+
+    fun stop() {
+        sensorManager.unregisterListener(accelListener)
+        sensorManager.unregisterListener(gyroListener)
+        sensorManager.unregisterListener(magListener)
+        sensorManager.unregisterListener(baroListener)
+    }
+}
 
 /**
  * Unified sensor data frame at 100Hz
@@ -185,15 +221,15 @@ data class MatchResult(
  * Main sensor interface for the pipeline
  */
 interface SensorHubInterface {
-    val dataFlow: kotlinx.coroutines.flow.Flow<NavDataFrame>
-    val textureGateFlow: kotlinx.coroutines.flow.Flow<TextureGateResult>
-    val velocityFlow: kotlinx.coroutines.flow.Flow<VelocityResult>
-    val wheelFlow: kotlinx.coroutines.flow.Flow<WheelResult>
-    val visualOdoFlow: kotlinx.coroutines.flow.Flow<VisualOdoResult?>
-    val outageForecastFlow: kotlinx.coroutines.flow.Flow<OutageForecast>
-    val fusedStateFlow: kotlinx.coroutines.flow.Flow<NavState>
-    val matchResultFlow: kotlinx.coroutines.flow.Flow<MatchResult>
-    
+    val dataFlow: Flow<NavDataFrame>
+    val textureGateFlow: Flow<TextureGateResult>
+    val velocityFlow: Flow<VelocityResult>
+    val wheelFlow: Flow<WheelResult>
+    val visualOdoFlow: Flow<VisualOdoResult?>
+    val outageForecastFlow: Flow<OutageForecast>
+    val fusedStateFlow: Flow<NavState>
+    val matchResultFlow: Flow<MatchResult>
+
     fun start()
     fun stop()
 }

@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">NAV-X</string>
+    <string name="start_demo">Start Demo</string>
+    <string name="simulate_blackout">Simulate Blackout</string>
+    <string name="velocity_label">Velocity: -- m/s</string>
+    <string name="heading_label">Heading: --°</string>
+    <string name="std_x_label">σx: -- m</string>
+    <string name="std_y_label">σy: -- m</string>
+    <string name="texture_label">Texture: --</string>
+    <string name="outage_risk">Outage Risk:</string>
+</resources>
