@@ -31,7 +31,6 @@ from navx.eval.forced_blackout import (
 
 from navx.eval.adapt_eval import (
     DeviceProfile,
-    get_device_profiles,
     CalibrationResult,
     CalibrationReport,
     run_calibration_benchmark,

@@ -5,18 +5,13 @@ Classification: OK / DEGRADED / FATAL
 """
 
 import logging
-import time
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
 
-from navx.eval.metrics import compute_ate, compute_drift_pct_km
 from aeronavis.config import get_config
-from aeronavis.data.preprocess import NavSequence
-from aeronavis.fusion.inekf import InEKF
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +207,7 @@ if __name__ == "__main__":
     degraded = sum(1 for r in results if r.outcome == EdgeOutcome.DEGRADED)
     fatal = sum(1 for r in results if r.outcome == EdgeOutcome.FATAL)
 
-    print(f"\n=== EDGE CASE SUMMARY ===")
+    print("\n=== EDGE CASE SUMMARY ===")
     print(f"OK: {ok} | DEGRADED: {degraded} | FATAL: {fatal}")
 
     for r in results:

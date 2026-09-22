@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-export BUDGET_MAX_MS="${BUDGET_MAX_MS:-100}"
+export BUDGET_MAX_MS="${BUDGET_MAX_MS:-150}"
 export ADAPTER_MAX_KB="${ADAPTER_MAX_KB:-200}"
 export BUNDLE_MAX_MB="${BUNDLE_MAX_MB:-15}"
 

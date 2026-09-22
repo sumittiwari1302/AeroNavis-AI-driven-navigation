@@ -146,9 +146,21 @@ def test_blackout_schedule():
     import numpy as np
     
     # Create a minimal mock sequence
-    imu = pd.DataFrame({"ts": np.arange(0, 100, 0.01), "acc_x": 0, "acc_y": 0, "acc_z": 9.81, "gyr_x": 0, "gyr_y": 0, "gyr_z": 0})
-    truth = pd.DataFrame({"ts": np.arange(0, 100, 0.1), "x_m": np.arange(0, 1000, 1), "y_m": 0, "z_m": 0, "heading": 0})
-    gnss = pd.DataFrame({"ts": np.arange(0, 100, 1.0), "lat": 0, "lon": 0, "alt_m": 0, "speed_mps": 10, "heading_deg": 0})
+    imu = pd.DataFrame({
+        "ts": np.arange(0, 100, 0.01),
+        "acc_x": 0, "acc_y": 0, "acc_z": 9.81,
+        "gyr_x": 0, "gyr_y": 0, "gyr_z": 0,
+    })
+    truth = pd.DataFrame({
+        "ts": np.arange(0, 100, 0.1),
+        "x_m": np.arange(0, 1000, 1),
+        "y_m": 0, "z_m": 0, "heading": 0,
+    })
+    gnss = pd.DataFrame({
+        "ts": np.arange(0, 100, 1.0),
+        "lat": 0, "lon": 0, "alt_m": 0,
+        "speed_mps": 10, "heading_deg": 0,
+    })
     
     seq = NavSequence(
         seq_id="test",

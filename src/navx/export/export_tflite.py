@@ -32,7 +32,7 @@ from aeronavis.models.texture_gate import TextureGate, build_texture_gate, Textu
 from aeronavis.predict.model import (
     PredictTransformer,
     build_predict_model,
-    PredictTransformerConfig,
+    PredictModelConfig,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -141,7 +141,7 @@ def load_model_checkpoint(model_class, checkpoint_path: Path, config: Config, de
         from aeronavis.predict.model import PredictTransformer
 
         model = PredictTransformer(
-            PredictTransformerConfig(
+            PredictModelConfig(
                 input_dim=104,
                 d_model=128,
                 n_heads=4,
@@ -421,7 +421,7 @@ def main():
         try:
             # Load model
             if ckpt_path:
-                model = load_model_checkpoint(model_class, Path(ckpt_path), device="cpu")
+                model = load_model_checkpoint(model_class, Path(ckpt_path), get_config(), device="cpu")
             else:
                 # Build from config
                 if model_name == "velocity":
