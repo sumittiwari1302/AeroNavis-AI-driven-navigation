@@ -164,12 +164,9 @@ class InEKF(private val config: InEKFConfig) {
 
     fun correctWheel(m: WheelMeasurement) {
         val H = Array(1) { DoubleArray(N) { 0.0 } }
-        val c = cos(state[2])
-        val s = sin(state[2])
-        H[0][3] = c
-        H[0][4] = -s
+        H[0][3] = 1.0
 
-        val zPred = H[0][3] * state[3] + H[0][4] * state[4]
+        val zPred = H[0][3] * state[3]
         val y = m.vxBody.toDouble() - zPred
         val r = (config.wheelSpeedStd * config.wheelSpeedStd).coerceAtLeast(1e-4)
         val S = matMul(matMul(H, covariance), matTranspose(H))[0][0] + r

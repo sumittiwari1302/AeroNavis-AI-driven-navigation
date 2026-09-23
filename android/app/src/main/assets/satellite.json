@@ -1,0 +1,25 @@
+{
+  "version": 8,
+  "name": "AeroNavis Satellite",
+  "sources": {
+    "aeronavis-satellite": {
+      "type": "raster",
+      "tiles": [
+        "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+      ],
+      "tileSize": 256,
+      "minzoom": 0,
+      "maxzoom": 19,
+      "attribution": "Esri, Maxar, Earthstar Geographics"
+    }
+  },
+  "layers": [
+    {
+      "id": "aeronavis-satellite-layer",
+      "type": "raster",
+      "source": "aeronavis-satellite",
+      "minzoom": 0,
+      "maxzoom": 19
+    }
+  ]
+}
