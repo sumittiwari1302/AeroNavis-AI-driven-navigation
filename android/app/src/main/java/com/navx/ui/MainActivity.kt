@@ -1,7 +1,10 @@
 package com.navx.ui
 
+import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -16,21 +19,63 @@ import com.navx.engine.SpeedFilter
 import com.navx.fusion.InEKF
 import com.navx.fusion.InEKFConfig
 import com.navx.fusion.WheelMeasurement
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.sin
 import kotlin.random.Random
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
 
     private val gt = DoubleArray(3)
     private var gtSpeed = 0.0
     private var prevSpeed = 0.0
+    private var prevGtYaw = 0.0
     private var tSec = 0.0
     private var distTraveled = 0.0
+    private var segIdx = 0
+    private var along = 0.0
+
+    // The vehicle drives a city-block circuit that hugs the offline street grid
+    // (rounded corners, max ~5 m off the roads). Map-matching is therefore
+    // exact through both tunnel blackouts, and the blue route line follows the
+    // streets exactly like Google Maps.
+    private val routeWp: Array<DoubleArray> = buildRoute()
+
+    private fun buildRoute(): Array<DoubleArray> {
+        val R = 16.0
+        val arcN = 10
+        val pts = ArrayList<DoubleArray>()
+        pts.add(doubleArrayOf(0.0, -96.0))
+        arc(pts, 96.0, -96.0, 1.0, 0.0, R, arcN)   // bottom-right: east -> north
+        arc(pts, 96.0, 96.0, 0.0, 1.0, R, arcN)    // top-right: north -> west
+        arc(pts, -96.0, 96.0, -1.0, 0.0, R, arcN)  // top-left: west -> south
+        arc(pts, -96.0, -96.0, 0.0, -1.0, R, arcN) // bottom-left: south -> east
+        return pts.toTypedArray()
+    }
+
+    private fun arc(
+        pts: MutableList<DoubleArray>,
+        cx: Double, cy: Double,
+        ux: Double, uy: Double,
+        R: Double, n: Int
+    ) {
+        val nx = -uy
+        val ny = ux
+        val cX = cx - R * ux + R * nx
+        val cY = cy - R * uy + R * ny
+        val t0 = Math.atan2(-ux, uy)
+        for (k in 1..n) {
+            val t = t0 + (Math.PI / 2.0) * k / n
+            pts.add(doubleArrayOf(cX + R * Math.cos(t), cY + R * Math.sin(t)))
+        }
+    }
 
     private var inEKF = InEKF(InEKFConfig())
     private val rng = Random(42)
@@ -53,11 +98,13 @@ class MainActivity : AppCompatActivity() {
 
     private val gtPath = ArrayDeque<FloatArray>()
     private val estPath = ArrayDeque<FloatArray>()
+    private val routePath = ArrayDeque<FloatArray>()
     private val log = ArrayDeque<String>()
 
     private lateinit var navCanvas: NavSatView
     private lateinit var tvModeChip: TextView
     private lateinit var tvStatus: TextView
+    private lateinit var tvLoc: TextView
     private lateinit var tvSpeed: TextView
     private lateinit var tvHeading: TextView
     private lateinit var tvPosErr: TextView
@@ -76,6 +123,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnStop: Button
     private lateinit var btnBlackout: Button
     private lateinit var btnReset: Button
+    private lateinit var btnMapType: Button
     private lateinit var tvLive: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,6 +133,7 @@ class MainActivity : AppCompatActivity() {
         navCanvas = findViewById(R.id.navCanvas)
         tvModeChip = findViewById(R.id.tvModeChip)
         tvStatus = findViewById(R.id.tvStatus)
+        tvLoc = findViewById(R.id.tvLoc)
         tvSpeed = findViewById(R.id.tvSpeed)
         tvHeading = findViewById(R.id.tvHeading)
         tvPosErr = findViewById(R.id.tvPosErr)
@@ -103,6 +152,7 @@ class MainActivity : AppCompatActivity() {
         btnStop = findViewById(R.id.btnStop)
         btnBlackout = findViewById(R.id.btnBlackout)
         btnReset = findViewById(R.id.btnReset)
+        btnMapType = findViewById(R.id.btnMapType)
         tvLive = findViewById(R.id.tvLive)
 
         btnStart.setOnClickListener { startDemo() }
@@ -110,7 +160,10 @@ class MainActivity : AppCompatActivity() {
         btnStop.setOnClickListener { stopDemo() }
         btnBlackout.setOnClickListener { toggleBlackout() }
         btnReset.setOnClickListener { resetDemo() }
+        btnMapType.setOnClickListener { toggleMapType() }
 
+        tvLoc.text = "📍 Locating…"
+        locateCity()
         pushLog("• NAV-X 3.0 ready — AI + GNSS/INS fusion demo")
     }
 
@@ -144,6 +197,26 @@ class MainActivity : AppCompatActivity() {
         paused = false
         alignedLogged = false
         mapMatchLogged = false
+        inEKF = InEKF(InEKFConfig())
+        inEKF.setPose(0.0, -96.0, 0.0)
+        for (i in gt.indices) gt[i] = 0.0
+        gt[0] = 0.0
+        gt[1] = -96.0
+        gtSpeed = 0.0
+        prevSpeed = 0.0
+        prevGtYaw = 0.0
+        tSec = 0.0
+        distTraveled = 0.0
+        segIdx = 0
+        along = 0.0
+        manualBlackout = false
+        speedFilter.reset()
+        gtPath.clear()
+        estPath.clear()
+        routePath.clear()
+        log.clear()
+        lastGnssFixMs = 0L
+        lastMapMatchMs = 0L
         pushLog("• START — vehicle in motion · calibrating phone alignment…")
         runLoop()
         btnStart.isEnabled = false
@@ -199,19 +272,80 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun toggleMapType() {
+        val next = if (navCanvas.mapType() == NavSatView.MAP_SATELLITE)
+            NavSatView.MAP_STREET else NavSatView.MAP_SATELLITE
+        navCanvas.setMapType(next)
+        btnMapType.text = if (next == NavSatView.MAP_STREET) "MAP" else "SAT"
+    }
+
+    private fun isOnline(): Boolean {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val nc = cm.getNetworkCapabilities(cm.activeNetwork)
+        return nc != null && nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    private fun locateCity() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val label = if (!isOnline()) {
+                "12.9716°N, 77.5946°E · offline map"
+            } else {
+                reverseGeocode(12.9716, 77.5946)
+            }
+            runOnUiThread {
+                tvLoc.text = when {
+                    label.isEmpty() -> "📍 12.9716°N, 77.5946°E"
+                    label.contains("·") -> "📍 $label"
+                    else -> "📍 $label · online"
+                }
+            }
+        }
+    }
+
+    private fun reverseGeocode(lat: Double, lng: Double): String {
+        return try {
+            val url = URL(
+                "https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lng&zoom=16&addressdetails=1"
+            )
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("User-Agent", "AeroNavis/3.0 (SIH demo; offline GNSS navigation)")
+            conn.connectTimeout = 6000
+            conn.readTimeout = 6000
+            val js = conn.inputStream.bufferedReader().use { it.readText() }.let { JSONObject(it) }
+            conn.disconnect()
+            val a = js.optJSONObject("address")
+            val city = a?.optString("city")?.takeIf { it.isNotEmpty() }
+                ?: a?.optString("town")?.takeIf { it.isNotEmpty() }
+                ?: a?.optString("municipality")?.takeIf { it.isNotEmpty() }
+                ?: a?.optString("state_district")
+            val state = a?.optString("state")
+            listOfNotNull(city, state).joinToString(", ")
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
     private fun resetDemo() {
         stopDemo()
         inEKF = InEKF(InEKFConfig())
-        for (i in gt.indices) gt[i] = 0.0
+        inEKF.setPose(0.0, -96.0, 0.0)
+        gt[0] = 0.0
+        gt[1] = -96.0
+        gt[2] = 0.0
         gtSpeed = 0.0
         prevSpeed = 0.0
+        prevGtYaw = 0.0
         tSec = 0.0
         distTraveled = 0.0
+        segIdx = 0
+        along = 0.0
         manualBlackout = false
         alignment.reset()
         speedFilter.reset()
         gtPath.clear()
         estPath.clear()
+        routePath.clear()
         log.clear()
         lastGnssFixMs = 0L
         lastMapMatchMs = 0L
@@ -233,10 +367,9 @@ class MainActivity : AppCompatActivity() {
         prevSpeed = gtSpeed
         gtSpeed = 4.0 + 1.2 * sin(tSec / 5.0)
         val aLong = (gtSpeed - prevSpeed) / dt
-        val yawRate = 0.45 * sin(tSec / 3.5) + 0.12 * sin(tSec / 1.7)
-        gt[2] = wrapAngle(gt[2] + yawRate * dt)
-        gt[0] += gtSpeed * cos(gt[2]) * dt
-        gt[1] += gtSpeed * sin(gt[2]) * dt
+        prevGtYaw = gt[2]
+        advanceAlongPath(gtSpeed * dt)
+        val yawRate = wrapAngle(gt[2] - prevGtYaw) / dt
         distTraveled += gtSpeed * dt
 
         if (!alignment.isCalibrated) {
@@ -304,15 +437,15 @@ class MainActivity : AppCompatActivity() {
             val st = inEKF.state()
             if (nowReal - lastMapMatchMs >= 500L) {
                 lastMapMatchMs = nowReal
-                val mm = mapMatcher.match(st[0], st[1])
+                val mm = mapMatcher.match(st[0], st[1], 8.0)
                 if (mm.snapped) {
                     inEKF.correctGnss(
                         doubleArrayOf(mm.x, mm.y, st[2]),
-                        doubleArrayOf(4.0, 4.0, 1e-3)
+                        doubleArrayOf(6.0, 6.0, 1e-3)
                     )
                     aiMode = "DR + MAP-MATCH (NHC)"
                     if (!mapMatchLogged) {
-                        pushLog("📍 Map-matched → snapped to road (${"%.1f".format(mm.offRoad)} m off-road)")
+                        pushLog("📍 Map-matched → snapped to street grid (NHC + lane-keeping)")
                         mapMatchLogged = true
                     }
                 } else {
@@ -338,6 +471,9 @@ class MainActivity : AppCompatActivity() {
         val est = inEKF.state()
         pushPath(gtPath, gt[0], gt[1])
         pushPath(estPath, est[0], est[1])
+
+        val rr = mapMatcher.match(gt[0], gt[1], 12.0)
+        pushPath(routePath, rr.x, rr.y)
 
         val pErr = hypot(gt[0] - est[0], gt[1] - est[1])
         val sigma = hypot(inEKF.stdX(), inEKF.stdY())
@@ -409,7 +545,8 @@ class MainActivity : AppCompatActivity() {
                 yaw = inEKF.heading(),
                 mode = mode,
                 gtPath = gtPath.toList(),
-                estPath = estPath.toList()
+                estPath = estPath.toList(),
+                route = routePath.toList()
             )
         )
     }
@@ -434,5 +571,38 @@ class MainActivity : AppCompatActivity() {
         while (v > Math.PI) v -= 2 * Math.PI
         while (v <= -Math.PI) v += 2 * Math.PI
         return v
+    }
+
+    /** Move the vehicle along the rounded city-block circuit on the street grid. */
+    private fun advanceAlongPath(ds: Double) {
+        var remain = ds
+        while (remain > 0.0) {
+            val a = routeWp[segIdx]
+            val b = routeWp[segIdx + 1]
+            val dx = b[0] - a[0]
+            val dy = b[1] - a[1]
+            val segLen = hypot(dx, dy)
+            if (segLen <= 1e-9) {
+                segIdx = (segIdx + 1) % (routeWp.size - 1)
+                continue
+            }
+            val toEnd = segLen - along
+            if (remain >= toEnd) {
+                gt[0] = b[0]
+                gt[1] = b[1]
+                along = 0.0
+                segIdx = (segIdx + 1) % (routeWp.size - 1)
+                remain -= toEnd
+                continue
+            }
+            val prog = along + remain
+            gt[0] = a[0] + dx * prog / segLen
+            gt[1] = a[1] + dy * prog / segLen
+            along = prog
+            remain = 0.0
+        }
+        val a = routeWp[segIdx]
+        val b = routeWp[segIdx + 1]
+        gt[2] = Math.atan2(b[1] - a[1], b[0] - a[0])
     }
 }

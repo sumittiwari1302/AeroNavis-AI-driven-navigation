@@ -251,6 +251,12 @@ class InEKF(private val config: InEKFConfig) {
         if (!active) lastGoodPose = state.clone()
     }
 
+    fun setPose(x: Double, y: Double, yaw: Double) {
+        state[0] = x
+        state[1] = y
+        state[2] = wrapAngle(yaw)
+    }
+
     fun state(): DoubleArray = state.clone()
     fun covariance(): DoubleArray = covariance.clone()
     fun velocity(): DoubleArray = doubleArrayOf(state[3], state[4])

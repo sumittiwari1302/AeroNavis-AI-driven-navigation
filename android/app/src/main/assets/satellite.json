@@ -1,6 +1,6 @@
 {
   "version": 8,
-  "name": "AeroNavis Satellite",
+  "name": "AeroNavis Map",
   "sources": {
     "aeronavis-satellite": {
       "type": "raster",
@@ -11,6 +11,16 @@
       "minzoom": 0,
       "maxzoom": 19,
       "attribution": "Esri, Maxar, Earthstar Geographics"
+    },
+    "aeronavis-street": {
+      "type": "raster",
+      "tiles": [
+        "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+      ],
+      "tileSize": 256,
+      "minzoom": 0,
+      "maxzoom": 19,
+      "attribution": "© OpenStreetMap contributors"
     }
   },
   "layers": [
@@ -20,6 +30,16 @@
       "source": "aeronavis-satellite",
       "minzoom": 0,
       "maxzoom": 19
+    },
+    {
+      "id": "aeronavis-street-layer",
+      "type": "raster",
+      "source": "aeronavis-street",
+      "minzoom": 0,
+      "maxzoom": 19,
+      "layout": {
+        "visibility": "none"
+      }
     }
   ]
 }

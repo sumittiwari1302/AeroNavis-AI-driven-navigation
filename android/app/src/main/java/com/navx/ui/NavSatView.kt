@@ -16,6 +16,7 @@ import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.FillExtrusionLayer
 import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
@@ -29,18 +30,19 @@ import kotlin.math.max
 import kotlin.math.sin
 
 /**
- * Live 3D satellite map backed by MapLibre.
+ * Live 3D map backed by MapLibre, Google-Maps style.
  *
- * Uses free Esri World Imagery satellite tiles (no API key) and renders the
- * real ground, then overlays:
+ * Basemap: real satellite imagery (Esri World Imagery) with a switchable
+ * street map (OpenStreetMap) layer — both free, no API key. Overlays:
+ *   - offline synthetic road network (thin gray grid streets)
+ *   - Google-Maps-like blue navigation route (map-matched to roads)
  *   - ground-truth path (green line)
- *   - InEKF estimated path  (cyan line)
- *   - the running 3-sigma uncertainty as an extruded 3D tower that grows on a
- *     GNSS blackout and collapses when the fix is re-acquired
- *   - a white dot at the current estimated position
+ *   - InEKF estimated path (cyan line)
+ *   - running 3-sigma uncertainty as an extruded 3D tower (amber, red on outage)
+ *   - white dot = estimated position, light-green dot = ground truth
  *
- * The camera starts tilted (60°) for a Google-Maps-bird's-eye 3D look; users
- * can rotate/tilt/zoom with the standard map gestures.
+ * The camera starts tilted 60° for a 3D bird's-eye look; users can pan,
+ * rotate, tilt and zoom with the standard map gestures.
  */
 class NavSatView @JvmOverloads constructor(
     context: Context,
@@ -58,8 +60,14 @@ class NavSatView @JvmOverloads constructor(
         val yaw: Double = 0.0,
         val mode: Int = 0, // 0=link, 1=outage, 2=recovered
         val gtPath: List<FloatArray> = emptyList(),
-        val estPath: List<FloatArray> = emptyList()
+        val estPath: List<FloatArray> = emptyList(),
+        val route: List<FloatArray> = emptyList()
     )
+
+    companion object {
+        const val MAP_SATELLITE = 0
+        const val MAP_STREET = 1
+    }
 
     // Bengaluru (ISRO HQ) — sensor-fusion demo lives in local meters around here.
     private val anchorLat = 12.9716
@@ -67,21 +75,24 @@ class NavSatView @JvmOverloads constructor(
 
     private val mapView: MapView
     private var map: MapLibreMap? = null
+    private var style: Style? = null
     private var styleReady = false
     private var firstCamera = true
+    private var mapType = MAP_SATELLITE
 
     private var gtSrc: GeoJsonSource? = null
     private var estSrc: GeoJsonSource? = null
     private var uncSrc: GeoJsonSource? = null
     private var posSrc: GeoJsonSource? = null
     private var gtPosSrc: GeoJsonSource? = null
+    private var routeSrc: GeoJsonSource? = null
+    private var roadSrc: GeoJsonSource? = null
     private var uncExtrusion: FillExtrusionLayer? = null
     private var uncFill: FillLayer? = null
 
     init {
         // MapLibre 11 requires an instance before the MapView is created.
-        // Tiles come from Esri World Imagery (asset style), so this dummy key
-        // is only needed to satisfy the SDK's configuration check.
+        // Tiles are free (Esri / OSM), so this dummy key only satisfies the SDK check.
         MapLibre.getInstance(context, "aeronavis-satellite-demo", WellKnownTileServer.MapLibre)
         mapView = MapView(context)
         mapView.layoutParams = LayoutParams(
@@ -90,8 +101,9 @@ class NavSatView @JvmOverloads constructor(
         addView(mapView)
         mapView.getMapAsync { m ->
             map = m
-            m.setStyle(Style.Builder().fromUri("asset://satellite.json")) { style ->
-                setupLayers(style)
+            m.setStyle(Style.Builder().fromUri("asset://satellite.json")) { s ->
+                style = s
+                setupLayers(s)
                 styleReady = true
                 m.moveCamera(
                     CameraUpdateFactory.newCameraPosition(
@@ -114,12 +126,18 @@ class NavSatView @JvmOverloads constructor(
         uncSrc = GeoJsonSource("unc-src", empty)
         posSrc = GeoJsonSource("pos-src", empty)
         gtPosSrc = GeoJsonSource("gt-pos-src", empty)
+        routeSrc = GeoJsonSource("route-src", empty)
+        roadSrc = GeoJsonSource("road-src", FeatureCollection.fromFeatures(buildRoadFeatures()))
 
         val g = gtSrc as GeoJsonSource
         val e = estSrc as GeoJsonSource
         val u = uncSrc as GeoJsonSource
         val p = posSrc as GeoJsonSource
         val gp = gtPosSrc as GeoJsonSource
+        val rt = routeSrc as GeoJsonSource
+        val rd = roadSrc as GeoJsonSource
+        style.addSource(rd)
+        style.addSource(rt)
         style.addSource(g)
         style.addSource(e)
         style.addSource(u)
@@ -127,10 +145,26 @@ class NavSatView @JvmOverloads constructor(
         style.addSource(gp)
 
         style.addLayer(
+            LineLayer("road-line", "road-src").withProperties(
+                PropertyFactory.lineColor(Color.parseColor("#FFFFFF")),
+                PropertyFactory.lineWidth(1f),
+                PropertyFactory.lineOpacity(0.30f)
+            )
+        )
+        style.addLayer(
+            LineLayer("route-line", "route-src").withProperties(
+                PropertyFactory.lineColor(Color.parseColor("#3B82F6")),
+                PropertyFactory.lineWidth(5.5f),
+                PropertyFactory.lineOpacity(0.95f),
+                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)
+            )
+        )
+        style.addLayer(
             LineLayer("gt-line", "gt-src").withProperties(
                 PropertyFactory.lineColor(Color.parseColor("#4CAF50")),
-                PropertyFactory.lineWidth(3.5f),
-                PropertyFactory.lineOpacity(0.95f)
+                PropertyFactory.lineWidth(3f),
+                PropertyFactory.lineOpacity(0.6f)
             )
         )
         style.addLayer(
@@ -172,6 +206,55 @@ class NavSatView @JvmOverloads constructor(
         )
     }
 
+    /** Synthetic offline street layout (matches the map-matching road network). */
+    private fun buildRoadFeatures(): List<Feature> {
+        val spacing = 24.0
+        val extent = 168.0
+        val feats = ArrayList<Feature>()
+        var v = -extent
+        while (v <= extent) {
+            feats.add(
+                Feature.fromGeometry(
+                    LineString.fromLngLats(
+                        listOf(
+                            Point.fromLngLat(lng(-extent), lat(v)),
+                            Point.fromLngLat(lng(extent), lat(v))
+                        )
+                    )
+                )
+            )
+            feats.add(
+                Feature.fromGeometry(
+                    LineString.fromLngLats(
+                        listOf(
+                            Point.fromLngLat(lng(v), lat(-extent)),
+                            Point.fromLngLat(lng(v), lat(extent))
+                        )
+                    )
+                )
+            )
+            v += spacing
+        }
+        return feats
+    }
+
+    /** 0 = satellite imagery, 1 = street map. */
+    fun setMapType(type: Int) {
+        mapType = type
+        val s = style ?: return
+        val sat = s.getLayer("aeronavis-satellite-layer") ?: return
+        val street = s.getLayer("aeronavis-street-layer") ?: return
+        if (type == MAP_STREET) {
+            sat.setProperties(PropertyFactory.visibility(Property.NONE))
+            street.setProperties(PropertyFactory.visibility(Property.VISIBLE))
+        } else {
+            sat.setProperties(PropertyFactory.visibility(Property.VISIBLE))
+            street.setProperties(PropertyFactory.visibility(Property.NONE))
+        }
+    }
+
+    fun mapType(): Int = mapType
+
     fun setScene(scene: Scene) {
         val m = map ?: return
         if (!styleReady) return
@@ -186,11 +269,15 @@ class NavSatView @JvmOverloads constructor(
         val tests = scene.estPath.map { f ->
             Point.fromLngLat(lng(f[0].toDouble()), lat(f[1].toDouble()))
         }
+        val rt = scene.route.map { f ->
+            Point.fromLngLat(lng(f[0].toDouble()), lat(f[1].toDouble()))
+        }
         val g = gtSrc
         val e = estSrc
         val u = uncSrc
         val p = posSrc
         val gp = gtPosSrc
+        routeSrc?.setGeoJson(LineString.fromLngLats(rt))
         g?.setGeoJson(LineString.fromLngLats(tgts))
         e?.setGeoJson(LineString.fromLngLats(tests))
 
