@@ -96,7 +96,17 @@ class LocationActivity : AppCompatActivity() {
             i.putExtra(MainActivity.EXTRA_NAME, foundName)
             i.putExtra(MainActivity.EXTRA_LAT, foundLat)
             i.putExtra(MainActivity.EXTRA_LNG, foundLng)
-            startActivity(i)
+            val seen = prefs.getBoolean("seen_walkthrough", false)
+            if (seen) {
+                startActivity(i)
+            } else {
+                startActivity(
+                    Intent(this, WalkthroughActivity::class.java)
+                        .putExtra(MainActivity.EXTRA_NAME, foundName)
+                        .putExtra(MainActivity.EXTRA_LAT, foundLat)
+                        .putExtra(MainActivity.EXTRA_LNG, foundLng)
+                )
+            }
             finish()
         }
     }

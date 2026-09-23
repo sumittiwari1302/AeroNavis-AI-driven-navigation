@@ -77,6 +77,13 @@
             android:theme="@style/Theme.NavX.NoActionBar">
         </activity>
 
+        <activity
+            android:name=".ui.WalkthroughActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.NavX.NoActionBar">
+        </activity>
+
     </application>
 
 </manifest>

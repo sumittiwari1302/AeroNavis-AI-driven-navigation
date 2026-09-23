@@ -19,6 +19,7 @@ import com.navx.engine.MapMatcher
 import com.navx.engine.OutageDetector
 import com.navx.engine.SpeedFilter
 import com.navx.fusion.InEKF
+import com.navx.fusion.ModelTrainer
 import com.navx.fusion.InEKFConfig
 import com.navx.fusion.WheelMeasurement
 import java.net.HttpURLConnection
@@ -47,6 +48,7 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_NAME = "loc_name"
         const val EXTRA_LAT = "loc_lat"
         const val EXTRA_LNG = "loc_lng"
+        const val EXTRA_HELP = "help_only"
 
         const val MODE_DEV = 0
         const val MODE_LORA = 1
@@ -115,6 +117,7 @@ class MainActivity : AppCompatActivity() {
     private val speedFilter = SpeedFilter()
     private val outageDetector = OutageDetector()
     private val mapMatcher = MapMatcher()
+    private val modelTrainer = ModelTrainer()
 
     private var job: Job? = null
     private var paused = false
@@ -156,6 +159,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnReset: Button
     private lateinit var btnMapType: Button
     private lateinit var btnMode: Button
+    private lateinit var btnHelp: Button
+    private lateinit var tvIntro: TextView
     private lateinit var tvLive: TextView
 
     private var curMode = MODE_DEV
@@ -164,6 +169,11 @@ class MainActivity : AppCompatActivity() {
     private var locName = "Bengaluru, Karnataka"
     private var locLat = 12.9716
     private var locLng = 77.5946
+
+    // Per-unit sensor imperfections this run's trainer has to cancel.
+    private var simGyroBiasRad = 0.0
+    private var simWheelScale = 1.0
+    private var trainedLogged = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -193,6 +203,8 @@ class MainActivity : AppCompatActivity() {
         btnReset = findViewById(R.id.btnReset)
         btnMapType = findViewById(R.id.btnMapType)
         btnMode = findViewById(R.id.btnMode)
+        btnHelp = findViewById(R.id.btnHelp)
+        tvIntro = findViewById(R.id.tvIntro)
         tvLive = findViewById(R.id.tvLive)
 
         btnStart.setOnClickListener { startDemo() }
@@ -203,6 +215,9 @@ class MainActivity : AppCompatActivity() {
         btnMapType.setOnClickListener { toggleMapType() }
         btnMode.setOnClickListener {
             startActivityForResult(Intent(this, ModeSelectActivity::class.java), RC_MODE)
+        }
+        btnHelp.setOnClickListener {
+            startActivity(Intent(this, WalkthroughActivity::class.java).putExtra(EXTRA_HELP, true))
         }
 
         reloadModeAndCal()
@@ -255,6 +270,10 @@ class MainActivity : AppCompatActivity() {
         along = 0.0
         manualBlackout = false
         speedFilter.reset()
+        modelTrainer.reset()
+        simGyroBiasRad = (rng.nextDouble() - 0.5) * Math.toRadians(0.3)
+        simWheelScale = 1.0 + (rng.nextDouble() - 0.5) * 0.04
+        trainedLogged = false
         gtPath.clear()
         estPath.clear()
         routePath.clear()
@@ -272,6 +291,7 @@ class MainActivity : AppCompatActivity() {
         btnPause.isEnabled = true
         btnPause.text = "PAUSE"
         tvLive.text = "RUNNING\n20 Hz"
+        tvIntro.visibility = View.GONE
     }
 
     private fun runLoop() {
@@ -309,6 +329,8 @@ class MainActivity : AppCompatActivity() {
         btnPause.isEnabled = false
         btnPause.text = "PAUSE"
         tvLive.text = "IDLE\n20 Hz"
+        tvIntro.visibility = View.VISIBLE
+        tvIntro.text = "🔹 Ready again — press START ▶ to drive another run (auto tunnels + BLACKOUT button)."
         pushLog("■ STOP — session ended")
     }
 
@@ -396,6 +418,9 @@ class MainActivity : AppCompatActivity() {
         locName = if (n.isEmpty()) "${"%.4f".format(locLat)}°N, ${"%.4f".format(locLng)}°E" else n
         navCanvas.setLocation(locLat, locLng)
         tvLoc.text = "📍 $locName · ${if (isOnline()) "online" else "offline"}"
+        tvIntro.text = "🔹 Map anchored at $locName. Press START ▶ — the demo vehicle drives the city block; GPS cuts in tunnels automatically."
+        tvIntro.visibility = View.VISIBLE
+        tvStatus.text = "Setup ready · press START ▶"
         pushLog("• Real map anchored at $locName")
     }
 
@@ -454,16 +479,42 @@ class MainActivity : AppCompatActivity() {
             (rng.nextDouble() - 0.5).toFloat() * 0.1f - cal.accBiasY.toFloat(),
             9.8f
         )
+        val gyrRawZ = yawRate + (rng.nextDouble() - 0.5) * 0.02 - cal.gyrBiasZRad - simGyroBiasRad
         val gyr = floatArrayOf(
             (rng.nextDouble() - 0.5).toFloat() * 0.02f,
             (rng.nextDouble() - 0.5).toFloat() * 0.02f,
-            (yawRate + (rng.nextDouble() - 0.5) * 0.02).toFloat() - cal.gyrBiasZRad.toFloat()
+            (gyrRawZ + modelTrainer.gyrBiasRad).toFloat()
         )
         inEKF.predict(acc, gyr, dt.toFloat())
 
         val gnssNow = gnssAvailable()
         val nowReal = System.currentTimeMillis()
 
+        val aiSpeed = speedFilter.estimate(
+            acc[0],
+            dt.toFloat(),
+            if (gnssNow) gtSpeed else null
+        ).coerceIn(0.0, 15.0)
+        val speedSensor = if (gnssNow) {
+            (aiSpeed + (rng.nextDouble() - 0.5) * 0.1).toFloat()
+        } else {
+            (aiSpeed * (1.0 + (rng.nextDouble() - 0.5) * 0.002)).toFloat()
+        }
+        val wheelRaw = speedSensor * cal.wheelScale.toFloat() * simWheelScale
+        val wheelCorrected = wheelRaw * modelTrainer.wheelScale
+        if (gnssNow && !modelTrainer.isFinalized()) {
+            modelTrainer.feed(gtSpeed * dt, wheelRaw * dt, gyrRawZ, yawRate)
+            if (modelTrainer.isFinalized() && !trainedLogged) {
+                trainedLogged = true
+                pushLog("🧠 MODEL TRAINED on-device — wheel scale ${"%.4f".format(simWheelScale)} → ${"%.4f".format(modelTrainer.wheelScale)} · gyro z-bias ${"%.2f".format(Math.toDegrees(-simGyroBiasRad))}°/s → corrected (GNSS-clean fit)")
+            }
+        }
+        inEKF.correctWheel(
+            WheelMeasurement(
+                timestamp = System.currentTimeMillis(),
+                vxBody = wheelCorrected.toFloat()
+            )
+        )
         if (outageDetector.update(gnssNow, nowReal)) {
             if (!gnssNow) {
                 pushLog("⚠ GNSS BLACKOUT → seamless AI dead-reckoning in ${outageDetector.lastLatencyMs} ms (NHC + map-match armed)")
@@ -480,22 +531,6 @@ class MainActivity : AppCompatActivity() {
             pushLog("✓ Alignment calibrated — pitch ${"%.1f".format(alignment.pitchDeg())}° roll ${"%.1f".format(alignment.rollDeg())}° yaw ${"%.1f".format(alignment.yawOffsetDeg())}°")
             alignedLogged = true
         }
-
-        val aiSpeed = speedFilter.estimate(
-            acc[0],
-            dt.toFloat(),
-            if (gnssNow) gtSpeed else null
-        ).coerceIn(0.0, 15.0)
-        inEKF.correctWheel(
-            WheelMeasurement(
-                timestamp = nowReal,
-                vxBody = (if (gnssNow) {
-                    (aiSpeed + (rng.nextDouble() - 0.5) * 0.1).toFloat()
-                } else {
-                    (aiSpeed * (1.0 + (rng.nextDouble() - 0.5) * 0.002)).toFloat()
-                }) * cal.wheelScale.toFloat()
-            )
-        )
 
         var aiMode = "GNSS+INS FUSION"
         if (gnssNow && nowReal - lastGnssFixMs >= 800L) {
@@ -538,6 +573,7 @@ class MainActivity : AppCompatActivity() {
             val st = inEKF.state()
             val err = hypot(gt[0] - st[0], gt[1] - st[1])
             val pct = err / distTraveled * 100.0
+            val probe = mapMatcher.match(st[0], st[1], cal.beltM)
             pushLog("📊 DRIFT ${"%.1f".format(err)} m over ${"%.0f".format(distTraveled)} m = ${"%.1f".format(pct)}% (target <10%)")
         }
 
@@ -572,24 +608,27 @@ class MainActivity : AppCompatActivity() {
 
         when (mode) {
             0 -> {
-                tvModeChip.text = "GNSS LINK"
+                tvModeChip.text = "GNSS LINK ✓"
                 tvModeChip.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#0A2E36"))
                 tvModeChip.setTextColor(Color.parseColor("#38BDF8"))
-                tvStatus.text = "Live GNSS + IMU fusion · AI speed filter active · σ = ${"%.1f".format(sigma)} m"
+                tvStatus.text = "🟢 LIVE · GPS + IMU fused · AI speed filter · σ = ${"%.1f".format(sigma)} m"
+                tvStatus.setTextColor(Color.parseColor("#A7F3D0"))
                 setDot(dotGps, Color.parseColor("#4CAF50"))
             }
             1 -> {
                 tvModeChip.text = "GNSS BLACKOUT"
                 tvModeChip.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#3A1A1A"))
                 tvModeChip.setTextColor(Color.parseColor("#FF6B6B"))
-                tvStatus.text = "AI dead-reckoning + InEKF · σ = ${"%.1f".format(sigma)} m · compensating with NHC/map-match"
+                tvStatus.text = "🔴 NO GPS · AI dead-reckoning keeps you online · σ = ${"%.1f".format(sigma)} m · NHC + map-match active"
+                tvStatus.setTextColor(Color.parseColor("#FFB4AB"))
                 setDot(dotGps, Color.parseColor("#FF5252"))
             }
             else -> {
-                tvModeChip.text = "RECOVERED"
+                tvModeChip.text = "RECOVERED ✓"
                 tvModeChip.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#1E3A2A"))
                 tvModeChip.setTextColor(Color.parseColor("#4ADE80"))
-                tvStatus.text = "GNSS re-acquired · position re-anchored · σ = ${"%.1f".format(sigma)} m"
+                tvStatus.text = "🟢 GPS RE-ACQUIRED · position re-anchored · fusion resumed · σ = ${"%.1f".format(sigma)} m"
+                tvStatus.setTextColor(Color.parseColor("#A7F3D0"))
                 setDot(dotGps, Color.parseColor("#4CAF50"))
             }
         }

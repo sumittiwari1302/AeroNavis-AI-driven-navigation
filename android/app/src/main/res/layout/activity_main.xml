@@ -99,6 +99,23 @@
                 android:textColor="#38BDF8"
                 android:textSize="12sp"
                 android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnHelp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/btn_round"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingStart="10dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="10dp"
+                android:paddingBottom="6dp"
+                android:text="?"
+                android:textColor="#94A3B8"
+                android:textSize="13sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <!-- Location / connectivity chip (state + city, reverse geocoded) -->
@@ -125,21 +142,41 @@
 
         <!-- Status line -->
         <TextView
-            android:id="@+id/tvStatus"
-            android:layout_width="wrap_content"
+            android:id="@+id/tvIntro"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="10dp"
             android:layout_marginEnd="10dp"
             android:layout_marginBottom="6dp"
             android:background="@drawable/panel_glass"
             android:elevation="4dp"
-            android:paddingStart="12dp"
-            android:paddingTop="8dp"
-            android:paddingEnd="12dp"
-            android:paddingBottom="8dp"
-            android:text="Tap START to begin the navigation demo."
+            android:paddingStart="14dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="10dp"
+            android:text="Tap START ▶ to begin the navigation demo."
+            android:textColor="#38BDF8"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <!-- Event banner -->
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="10dp"
+            android:layout_marginBottom="6dp"
+            android:background="@drawable/panel_glass"
+            android:elevation="4dp"
+            android:paddingStart="14dp"
+            android:paddingTop="10dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="10dp"
+            android:text="Setup ready · press START ▶ on the map."
             android:textColor="#D6DEE8"
-            android:textSize="12sp" />
+            android:textSize="13sp"
+            android:textStyle="bold" />
 
         <!-- Compact HUD -->
         <LinearLayout
@@ -393,7 +430,7 @@
                 android:layout_weight="1"
                 android:layout_marginEnd="4dp"
                 android:backgroundTint="#1E8E5A"
-                android:text="START"
+                android:text="START ▶"
                 android:textColor="#FFFFFF"
                 android:textStyle="bold" />
 
