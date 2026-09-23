@@ -39,7 +39,7 @@ class CalibrationActivity : AppCompatActivity() {
         P(MainActivity.KEY_ACC_Y, "Accelerometer Bias Y", "m/s²", -2.0, 2.0, 0.05, 2, 0.0),
         P(MainActivity.KEY_GYR_Z, "Gyro Bias Z", "°/s", -10.0, 10.0, 0.2, 1, 0.0),
         P(MainActivity.KEY_SCALE, "Wheel Scale Factor", "1.00x", 0.90, 1.10, 0.005, 3, 1.0),
-        P(MainActivity.KEY_BELT, "Map Band (road belt)", "m", 2.0, 20.0, 0.5, 1, 8.0)
+        P(MainActivity.KEY_BELT, "Map Band (road belt)", "m", 2.0, 20.0, 0.5, 1, 12.0)
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {

@@ -31,7 +31,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
 
@@ -44,6 +43,10 @@ class MainActivity : AppCompatActivity() {
         const val KEY_SCALE = "wheelScale"
         const val KEY_BELT = "beltM"
         const val EXTRA_MODE = "mode"
+        const val PREF_LOC = "navx_loc"
+        const val EXTRA_NAME = "loc_name"
+        const val EXTRA_LAT = "loc_lat"
+        const val EXTRA_LNG = "loc_lng"
 
         const val MODE_DEV = 0
         const val MODE_LORA = 1
@@ -156,7 +159,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvLive: TextView
 
     private var curMode = MODE_DEV
-    private var cal = Cal(0.0, 0.0, 0.0, 1.0, 8.0)
+    private var cal = Cal(0.0, 0.0, 0.0, 1.0, 12.0)
+
+    private var locName = "Bengaluru, Karnataka"
+    private var locLat = 12.9716
+    private var locLng = 77.5946
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -200,8 +207,7 @@ class MainActivity : AppCompatActivity() {
 
         reloadModeAndCal()
 
-        tvLoc.text = "📍 Locating…"
-        locateCity()
+        applyLocation()
         pushLog("• NAV-X 3.0 ready — AI + GNSS/INS fusion demo")
     }
 
@@ -336,7 +342,7 @@ class MainActivity : AppCompatActivity() {
     private fun loadCal(prefs: SharedPreferences): Cal {
         if (curMode == MODE_FLEET) {
             // Locked fleet profile: automated adaptation, standard constants.
-            return Cal(0.0, 0.0, 0.0, 1.02, 6.0)
+            return Cal(0.0, 0.0, 0.0, 1.02, 10.0)
         }
         val gzDeg = prefs.getFloat(KEY_GYR_Z, 0f).toDouble()
         return Cal(
@@ -374,45 +380,23 @@ class MainActivity : AppCompatActivity() {
         return nc != null && nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    private fun locateCity() {
-        lifecycleScope.launch(Dispatchers.IO) {
-            val label = if (!isOnline()) {
-                "12.9716°N, 77.5946°E · offline map"
-            } else {
-                reverseGeocode(12.9716, 77.5946)
-            }
-            runOnUiThread {
-                tvLoc.text = when {
-                    label.isEmpty() -> "📍 12.9716°N, 77.5946°E"
-                    label.contains("·") -> "📍 $label"
-                    else -> "📍 $label · online"
-                }
-            }
-        }
-    }
-
-    private fun reverseGeocode(lat: Double, lng: Double): String {
-        return try {
-            val url = URL(
-                "https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=$lat&lon=$lng&zoom=16&addressdetails=1"
-            )
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "AeroNavis/3.0 (SIH demo; offline GNSS navigation)")
-            conn.connectTimeout = 6000
-            conn.readTimeout = 6000
-            val js = conn.inputStream.bufferedReader().use { it.readText() }.let { JSONObject(it) }
-            conn.disconnect()
-            val a = js.optJSONObject("address")
-            val city = a?.optString("city")?.takeIf { it.isNotEmpty() }
-                ?: a?.optString("town")?.takeIf { it.isNotEmpty() }
-                ?: a?.optString("municipality")?.takeIf { it.isNotEmpty() }
-                ?: a?.optString("state_district")
-            val state = a?.optString("state")
-            listOfNotNull(city, state).joinToString(", ")
-        } catch (e: Exception) {
-            ""
-        }
+    private fun applyLocation() {
+        val p = getSharedPreferences(PREF_LOC, MODE_PRIVATE)
+        val hasPref = p.contains("lat")
+        locLat = intent.getDoubleExtra(
+            EXTRA_LAT,
+            if (hasPref) p.getFloat("lat", 12.9716f).toDouble() else 12.9716
+        )
+        locLng = intent.getDoubleExtra(
+            EXTRA_LNG,
+            if (hasPref) p.getFloat("lng", 77.5946f).toDouble() else 77.5946
+        )
+        val n = intent.getStringExtra(EXTRA_NAME)
+            ?: if (hasPref) p.getString("name", "") ?: "" else ""
+        locName = if (n.isEmpty()) "${"%.4f".format(locLat)}°N, ${"%.4f".format(locLng)}°E" else n
+        navCanvas.setLocation(locLat, locLng)
+        tvLoc.text = "📍 $locName · ${if (isOnline()) "online" else "offline"}"
+        pushLog("• Real map anchored at $locName")
     }
 
     private fun resetDemo() {
@@ -524,7 +508,7 @@ class MainActivity : AppCompatActivity() {
             inEKF.correctGnss(z)
         } else if (!gnssNow) {
             val st = inEKF.state()
-            if (nowReal - lastMapMatchMs >= 500L) {
+            if (nowReal - lastMapMatchMs >= 150L) {
                 lastMapMatchMs = nowReal
                 val mm = mapMatcher.match(st[0], st[1], cal.beltM)
                 if (mm.snapped) {
@@ -653,6 +637,7 @@ class MainActivity : AppCompatActivity() {
         log.addFirst(msg)
         while (log.size > 6) log.removeLast()
         tvLog.text = log.joinToString("\n")
+        android.util.Log.d("NAVX", msg.replace("\n", " | "))
     }
 
     private fun wrapAngle(a: Double): Double {

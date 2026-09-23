@@ -69,9 +69,9 @@ class NavSatView @JvmOverloads constructor(
         const val MAP_STREET = 1
     }
 
-    // Bengaluru (ISRO HQ) — sensor-fusion demo lives in local meters around here.
-    private val anchorLat = 12.9716
-    private val anchorLng = 77.5946
+    // Real city anchor — set by MainActivity from the State+City picker.
+    private var anchorLat = 12.9716
+    private var anchorLng = 77.5946
 
     private val mapView: MapView
     private var map: MapLibreMap? = null
@@ -254,6 +254,25 @@ class NavSatView @JvmOverloads constructor(
     }
 
     fun mapType(): Int = mapType
+
+    /** Anchors the map at a real city (from the State+City picker). */
+    fun setLocation(lat: Double, lng: Double) {
+        anchorLat = lat
+        anchorLng = lng
+        firstCamera = true
+        val m = map
+        if (m != null && styleReady) {
+            m.moveCamera(
+                CameraUpdateFactory.newCameraPosition(
+                    CameraPosition.Builder()
+                        .target(LatLng(anchorLat, anchorLng))
+                        .zoom(14.3)
+                        .tilt(0.0)
+                        .build()
+                )
+            )
+        }
+    }
 
     fun setScene(scene: Scene) {
         val m = map ?: return
