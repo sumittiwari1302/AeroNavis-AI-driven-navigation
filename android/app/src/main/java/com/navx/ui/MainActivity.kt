@@ -1,6 +1,8 @@
 package com.navx.ui
 
 import android.content.Context
+import android.content.Intent
+import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.net.ConnectivityManager
@@ -32,6 +34,32 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        const val PREF = "navx_cal"
+        const val KEY_MODE = "mode"
+        const val KEY_ACC_X = "accBiasX"
+        const val KEY_ACC_Y = "accBiasY"
+        const val KEY_GYR_Z = "gyrBiasZ"
+        const val KEY_SCALE = "wheelScale"
+        const val KEY_BELT = "beltM"
+        const val EXTRA_MODE = "mode"
+
+        const val MODE_DEV = 0
+        const val MODE_LORA = 1
+        const val MODE_FLEET = 2
+
+        private const val RC_MODE = 1001
+        private const val RC_CAL = 1002
+
+        data class Cal(
+            val accBiasX: Double,
+            val accBiasY: Double,
+            val gyrBiasZRad: Double,
+            val wheelScale: Double,
+            val beltM: Double
+        )
+    }
 
     private val gt = DoubleArray(3)
     private var gtSpeed = 0.0
@@ -124,7 +152,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnBlackout: Button
     private lateinit var btnReset: Button
     private lateinit var btnMapType: Button
+    private lateinit var btnMode: Button
     private lateinit var tvLive: TextView
+
+    private var curMode = MODE_DEV
+    private var cal = Cal(0.0, 0.0, 0.0, 1.0, 8.0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -153,6 +185,7 @@ class MainActivity : AppCompatActivity() {
         btnBlackout = findViewById(R.id.btnBlackout)
         btnReset = findViewById(R.id.btnReset)
         btnMapType = findViewById(R.id.btnMapType)
+        btnMode = findViewById(R.id.btnMode)
         tvLive = findViewById(R.id.tvLive)
 
         btnStart.setOnClickListener { startDemo() }
@@ -161,6 +194,11 @@ class MainActivity : AppCompatActivity() {
         btnBlackout.setOnClickListener { toggleBlackout() }
         btnReset.setOnClickListener { resetDemo() }
         btnMapType.setOnClickListener { toggleMapType() }
+        btnMode.setOnClickListener {
+            startActivityForResult(Intent(this, ModeSelectActivity::class.java), RC_MODE)
+        }
+
+        reloadModeAndCal()
 
         tvLoc.text = "📍 Locating…"
         locateCity()
@@ -218,6 +256,11 @@ class MainActivity : AppCompatActivity() {
         lastGnssFixMs = 0L
         lastMapMatchMs = 0L
         pushLog("• START — vehicle in motion · calibrating phone alignment…")
+        when (curMode) {
+            MODE_LORA -> pushLog("🧲 LoRA weights applied live → bias x${"%.2f".format(cal.accBiasX)}, y${"%.2f".format(cal.accBiasY)} · scale ${"%.3f".format(cal.wheelScale)}")
+            MODE_FLEET -> pushLog("🚚 Fleet profile FLD-042 · standardized constants · no per-vehicle tuning")
+            else -> pushLog("🛠 Dev/Integrator mode · full telemetry + adapters exposed")
+        }
         runLoop()
         btnStart.isEnabled = false
         btnPause.isEnabled = true
@@ -277,6 +320,52 @@ class MainActivity : AppCompatActivity() {
             NavSatView.MAP_STREET else NavSatView.MAP_SATELLITE
         navCanvas.setMapType(next)
         btnMapType.text = if (next == NavSatView.MAP_STREET) "MAP" else "SAT"
+    }
+
+    private fun reloadModeAndCal() {
+        val prefs = getSharedPreferences(PREF, MODE_PRIVATE)
+        curMode = prefs.getInt(KEY_MODE, MODE_DEV)
+        cal = loadCal(prefs)
+        btnMode.text = when (curMode) {
+            MODE_LORA -> "LoRA"
+            MODE_FLEET -> "FLEET"
+            else -> "DEV"
+        }
+    }
+
+    private fun loadCal(prefs: SharedPreferences): Cal {
+        if (curMode == MODE_FLEET) {
+            // Locked fleet profile: automated adaptation, standard constants.
+            return Cal(0.0, 0.0, 0.0, 1.02, 6.0)
+        }
+        val gzDeg = prefs.getFloat(KEY_GYR_Z, 0f).toDouble()
+        return Cal(
+            prefs.getFloat(KEY_ACC_X, 0f).toDouble(),
+            prefs.getFloat(KEY_ACC_Y, 0f).toDouble(),
+            Math.toRadians(gzDeg),
+            prefs.getFloat(KEY_SCALE, 1f).toDouble(),
+            prefs.getFloat(KEY_BELT, 8f).toDouble()
+        )
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        when (requestCode) {
+            RC_MODE -> {
+                reloadModeAndCal()
+                pushLog(
+                    when (curMode) {
+                        MODE_LORA -> "🧲 MODE: Manual Sensor Calibration — on-device LoRA fine-tuning active"
+                        MODE_FLEET -> "🚚 MODE: Fleet Deployment — locked standard profile FLD-042 active"
+                        else -> "🛠 MODE: Developer / Integrator — automated adaptation for pre-built APKs, telemetry on"
+                    }
+                )
+                if (curMode == MODE_LORA) {
+                    startActivityForResult(Intent(this, CalibrationActivity::class.java), RC_CAL)
+                }
+            }
+            RC_CAL -> reloadModeAndCal()
+        }
     }
 
     private fun isOnline(): Boolean {
@@ -377,14 +466,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         val acc = floatArrayOf(
-            aLong.toFloat() + (rng.nextDouble() - 0.5).toFloat() * 0.1f,
-            (rng.nextDouble() - 0.5).toFloat() * 0.1f,
+            aLong.toFloat() + (rng.nextDouble() - 0.5).toFloat() * 0.1f - cal.accBiasX.toFloat(),
+            (rng.nextDouble() - 0.5).toFloat() * 0.1f - cal.accBiasY.toFloat(),
             9.8f
         )
         val gyr = floatArrayOf(
             (rng.nextDouble() - 0.5).toFloat() * 0.02f,
             (rng.nextDouble() - 0.5).toFloat() * 0.02f,
-            (yawRate + (rng.nextDouble() - 0.5) * 0.02).toFloat()
+            (yawRate + (rng.nextDouble() - 0.5) * 0.02).toFloat() - cal.gyrBiasZRad.toFloat()
         )
         inEKF.predict(acc, gyr, dt.toFloat())
 
@@ -416,11 +505,11 @@ class MainActivity : AppCompatActivity() {
         inEKF.correctWheel(
             WheelMeasurement(
                 timestamp = nowReal,
-                vxBody = if (gnssNow) {
+                vxBody = (if (gnssNow) {
                     (aiSpeed + (rng.nextDouble() - 0.5) * 0.1).toFloat()
                 } else {
                     (aiSpeed * (1.0 + (rng.nextDouble() - 0.5) * 0.002)).toFloat()
-                }
+                }) * cal.wheelScale.toFloat()
             )
         )
 
@@ -437,7 +526,7 @@ class MainActivity : AppCompatActivity() {
             val st = inEKF.state()
             if (nowReal - lastMapMatchMs >= 500L) {
                 lastMapMatchMs = nowReal
-                val mm = mapMatcher.match(st[0], st[1], 8.0)
+                val mm = mapMatcher.match(st[0], st[1], cal.beltM)
                 if (mm.snapped) {
                     inEKF.correctGnss(
                         doubleArrayOf(mm.x, mm.y, st[2]),

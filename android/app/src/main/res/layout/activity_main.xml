@@ -82,6 +82,23 @@
                 android:textColor="#FFFFFF"
                 android:textSize="12sp"
                 android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnMode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/btn_round"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingStart="14dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="6dp"
+                android:text="DEV"
+                android:textColor="#38BDF8"
+                android:textSize="12sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <!-- Location / connectivity chip (state + city, reverse geocoded) -->
