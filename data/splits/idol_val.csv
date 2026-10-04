@@ -1,0 +1,7 @@
+seq_id,file_path,start_ts,end_ts,hours,km,outage_minutes
+idol_25,processed/idol/idol_25,0.0,594.01,0.165,0.534,0.0
+idol_37,processed/idol/idol_37,0.0,598.45,0.1662,0.591,0.0
+idol_32,processed/idol/idol_32,0.0,603.91,0.1678,0.469,0.0
+idol_19,processed/idol/idol_19,0.0,719.2,0.1998,0.595,0.0
+idol_39,processed/idol/idol_39,0.0,681.14,0.1892,0.551,0.0
+idol_40,processed/idol/idol_40,0.0,486.1,0.135,0.314,0.0

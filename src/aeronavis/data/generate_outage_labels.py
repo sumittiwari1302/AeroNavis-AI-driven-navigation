@@ -5,7 +5,6 @@ Creates per-window outage labels (0=no outage, 1=outage) from GNSS fix gaps.
 
 import logging
 from pathlib import Path
-from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -74,7 +73,6 @@ def generate_outage_labels_for_sequence(
     imu_ts = sequence.imu["ts"].values
     window = config.model.window
     stride = config.model.stride
-    dt = 1.0 / config.data.imu_hz
     
     # Window centers
     n_windows = (len(imu_ts) - window) // stride + 1
@@ -131,7 +129,10 @@ def generate_all_outage_labels(
         n = generate_outage_labels_for_sequence(seq, config, labels_path)
         total_windows += n
     
-    logger.info(f"Generated outage labels for {len(sequences)} sequences, {total_windows} total windows")
+    logger.info(
+        f"Generated outage labels for {len(sequences)} sequences, "
+        f"{total_windows} total windows"
+    )
     return total_windows
 
 
@@ -181,14 +182,20 @@ def main():
     
     parser = argparse.ArgumentParser(description="Generate labels for forecaster/slip training")
     parser.add_argument("--source", default="io_vnbd", help="Data source")
-    parser.add_argument("--outage-dir", default="data/processed/labels/outage", help="Outage labels output dir")
-    parser.add_argument("--slip-dir", default="data/processed/labels/slip", help="Slip labels output dir")
+    parser.add_argument(
+        "--outage-dir",
+        default="data/processed/labels/outage",
+        help="Outage labels output dir",
+    )
+    parser.add_argument(
+        "--slip-dir",
+        default="data/processed/labels/slip",
+        help="Slip labels output dir",
+    )
     parser.add_argument("--only-outage", action="store_true", help="Only generate outage labels")
     parser.add_argument("--only-slip", action="store_true", help="Only generate slip labels")
     
     args = parser.parse_args()
-    
-    config = get_config()
     
     if not args.only_slip:
         logger.info("Generating outage labels...")

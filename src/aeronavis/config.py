@@ -102,6 +102,7 @@ class DataConfig:
     max_gap_ms: int
     outage_min_gap_s: float
     earth_radius_m: float
+    predict_input_dim: int
 
 
 @dataclass(frozen=True)

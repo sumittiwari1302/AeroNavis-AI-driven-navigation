@@ -99,6 +99,8 @@ data.max_gap_ms: 200
 data.outage_min_gap_s: 2.0
 # WGS-84 semi-major axis, the only physical constant used for ENU projections.
 data.earth_radius_m: 6378137.0
+# Input feature dimension for prediction model (velocity dataset provides 6: acc+gyr)
+data.predict_input_dim: 6
 
 # --- splits ------------------------------------------------------------------
 # Train/val/test proportions. The seeding comes from the global `seed`; ratios

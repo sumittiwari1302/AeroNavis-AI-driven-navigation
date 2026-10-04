@@ -39,26 +39,49 @@ def _can_fit(counts: dict[str, int], targets: dict[str, int], split: str, add: i
 
 
 def make_splits(seqs: list[NavSequence], cfg: SplitsConfig) -> dict[str, list[NavSequence]]:
-    """Greedy placement of whole drive-groups onto target proportions."""
+    """Greedy placement of whole drive-groups onto target proportions.
+
+    Atoms stay intact, so a drive never straddles a split. Atoms are visited
+    smallest-first and `val` is filled before `train`: when a corpus has few, very
+    coarse atoms (e.g. one atom per subject), visiting them in hash order lets a
+    couple of oversized atoms consume `train` and leaves the smaller `val` target
+    unreachable, starving it to zero.
+    """
     atoms: dict[tuple[str, str], list[NavSequence]] = {}
     for seq in seqs:
         atoms.setdefault((seq.source, seq.drive_id), []).append(seq)
 
-    order = sorted(atoms.items(), key=lambda kv: (stable_atom(*kv[0]), kv[0]))
+    # Smallest atoms first; hash order breaks ties so placement stays deterministic.
+    order = sorted(atoms.items(), key=lambda kv: (len(kv[1]), stable_atom(*kv[0])))
     total = len(seqs)
     targets = _target_counts(total, cfg)
     counts = {"train": 0, "val": 0, "test": 0}
     buckets: dict[str, list[NavSequence]] = {"train": [], "val": [], "test": []}
+    placed: set[tuple[str, str]] = set()
 
-    for (source, drive), group in order:
-        placed = False
-        for split in ("train", "val"):
+    def try_place(group: list[NavSequence], splits: tuple[str, ...]) -> bool:
+        for split in splits:
             if _can_fit(counts, targets, split, len(group)):
                 buckets[split].extend(group)
                 counts[split] += len(group)
-                placed = True
-                break
-        if not placed:
+                return True
+        return False
+
+    # Pass 1: fill `val` (the scarcest target) with the smallest atoms.
+    for key, group in order:
+        if try_place(group, ("val",)):
+            placed.add(key)
+
+    # Pass 2: fill `train` from whatever atoms remain.
+    for key, group in order:
+        if key in placed:
+            continue
+        if try_place(group, ("train",)):
+            placed.add(key)
+
+    # Pass 3: anything that fits nowhere is held out as test.
+    for key, group in order:
+        if key not in placed:
             buckets["test"].extend(group)
             counts["test"] += len(group)
 

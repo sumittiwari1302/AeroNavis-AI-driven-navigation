@@ -109,8 +109,30 @@ def train_predict(
 
     # For prediction, we need different labels - use velocity data for now
     # Real implementation would use outage labels
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
+    # Wrap velocity dataset to provide features (acc+gyr) and synthetic labels
+    class PredictDatasetWrapper:
+        def __init__(self, ds, config):
+            self.ds = ds
+            self.config = config
+            self.horizons = config.predict.horizons
+        
+        def __len__(self):
+            return len(self.ds)
+        
+        def __getitem__(self, idx):
+            sample = self.ds[idx]
+            # Concatenate acc and gyr as features: (W, 6)
+            features = torch.cat([sample["acc"], sample["gyr"]], dim=-1)
+            # Synthetic labels: for now use random binary labels for outage prediction
+            # Real implementation would use actual outage labels
+            labels = torch.randint(0, 2, (len(self.horizons),), dtype=torch.float32)
+            return {"features": features, "labels": labels}
+    
+    train_ds_wrapped = PredictDatasetWrapper(train_ds, config)
+    val_ds_wrapped = PredictDatasetWrapper(val_ds, config)
+    
+    train_loader = DataLoader(train_ds_wrapped, batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_ds_wrapped, batch_size=batch_size, shuffle=False, num_workers=0)
 
     # Build model
     model = build_predict_model(config).to(device)
@@ -139,10 +161,11 @@ def train_predict(
             optimizer.zero_grad()
             preds = model(features)
 
-            # Compute BCE loss per horizon
+            # Compute BCE loss per horizon (clamp preds to avoid NaN)
             loss = 0
             for i, h in enumerate(model.config.horizons):
-                loss += nn.BCELoss()(preds[h], labels[:, i])
+                p = preds[h].clamp(1e-7, 1 - 1e-7)
+                loss += nn.BCELoss()(p, labels[:, i])
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -160,7 +183,8 @@ def train_predict(
                 preds = model(features)
                 loss = 0
                 for i, h in enumerate(model.config.horizons):
-                    loss += nn.BCELoss()(preds[h], labels[:, i])
+                    p = preds[h].clamp(1e-7, 1 - 1e-7)
+                    loss += nn.BCELoss()(p, labels[:, i])
                 val_losses.append(loss.item())
 
         avg_train = np.mean(train_losses)

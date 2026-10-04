@@ -184,16 +184,25 @@ def train_velocity(
     patience: int,
     out_dir: str,
     seed: int,
+    max_train_seqs: int = 20,
+    max_val_seqs: int = 5,
 ):
     torch.manual_seed(seed)
     torch.use_deterministic_algorithms(True, warn_only=True)
 
     config = get_config(config_path)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     logger.info(f"Using device: {device}")
 
     # Build datasets
-    train_ds, val_ds, test_ds = build_velocity_datasets(config)
+    train_ds, val_ds, test_ds = build_velocity_datasets(
+        config, max_train_seqs=max_train_seqs, max_val_seqs=max_val_seqs
+    )
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True, collate_fn=velocity_collate, num_workers=0
     )
@@ -256,6 +265,18 @@ def main():
     parser.add_argument("--patience", type=int, default=6, help="Early stopping patience")
     parser.add_argument("--out-dir", default="models/velocity", help="Output directory")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--max-train-seqs",
+        type=int,
+        default=20,
+        help="Max train sequences per source (unioned across sources)",
+    )
+    parser.add_argument(
+        "--max-val-seqs",
+        type=int,
+        default=5,
+        help="Max val/test sequences per source",
+    )
     args = parser.parse_args()
 
     best_path, best_metric = train_velocity(
@@ -267,6 +288,8 @@ def main():
         patience=args.patience,
         out_dir=args.out_dir,
         seed=args.seed,
+        max_train_seqs=args.max_train_seqs,
+        max_val_seqs=args.max_val_seqs,
     )
     logger.info(f"Best model saved to {best_path} with metric {best_metric:.4f}")
 

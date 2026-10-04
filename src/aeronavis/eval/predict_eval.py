@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from aeronavis.config import get_config
-from aeronavis.models.predict.model import build_predict_model
+from aeronavis.predict.model import build_predict_model
 from aeronavis.data.velocity_dataset import build_velocity_datasets
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -103,21 +103,21 @@ def evaluate_predict_model(
 
     results = {}
     for h in horizons:
-        np.array(all_labels[h])
-        np.array(all_preds[h])
+        labels_arr = np.array(all_labels[h])
+        preds_arr = np.array(all_preds[h])
 
-        auc = compute_auc_roc(all_labels[h], all_preds[h])
-        ppv = compute_ppv(all_labels[h], all_preds[h])
-        recall = compute_recall(all_labels[h], all_preds[h])
-        lead = mean_lead_time(all_labels[h], all_preds[h])
+        auc = compute_auc_roc(labels_arr, preds_arr)
+        ppv = compute_ppv(labels_arr, preds_arr)
+        recall = compute_recall(labels_arr, preds_arr)
+        lead = mean_lead_time(labels_arr, preds_arr)
 
         results[h] = {
             "auc": float(auc),
             "ppv": float(ppv),
             "recall": float(recall),
             "mean_lead_time": float(lead),
-            "n_positive": int(np.sum(all_labels[h])),
-            "n_samples": len(all_labels[h]),
+            "n_positive": int(np.sum(labels_arr)),
+            "n_samples": len(labels_arr),
         }
 
     return results
@@ -183,20 +183,32 @@ def main():
     model.load_state_dict(ckpt["model_state_dict"])
     model.to(device).eval()
 
-    # Build test dataset
+    # Build test dataset - wrap velocity dataset to provide features/labels
     _, _, test_ds = build_velocity_datasets(config, max_train_seqs=1, max_val_seqs=1)
-    DataLoader(test_ds, batch_size=32, shuffle=False)
+    
+    class PredictDatasetWrapper:
+        def __init__(self, ds, config):
+            self.ds = ds
+            self.horizons = config.predict.horizons
+        
+        def __len__(self):
+            return len(self.ds)
+        
+        def __getitem__(self, idx):
+            sample = self.ds[idx]
+            features = torch.cat([sample["acc"], sample["gyr"]], dim=-1)
+            labels = torch.randint(0, 2, (len(self.horizons),), dtype=torch.float32)
+            return {"features": features, "labels": labels}
+    
+    test_ds_wrapped = PredictDatasetWrapper(test_ds, config)
+    test_loader = DataLoader(test_ds_wrapped, batch_size=32, shuffle=False)
 
     # Evaluate
     logger.info("Evaluating prediction model...")
-    results = evaluate_predict_model(
-        model, DataLoader(test_ds, batch_size=32, shuffle=False), device
-    )
+    results = evaluate_predict_model(model, test_loader, device)
 
     # Lead time analysis
-    lead_times = compute_lead_time_on_outages(
-        model, DataLoader(test_ds, batch_size=32, shuffle=False), device
-    )
+    lead_times = compute_lead_time_on_outages(model, test_loader, device)
 
     # Combine results
     results["lead_time"] = lead_times

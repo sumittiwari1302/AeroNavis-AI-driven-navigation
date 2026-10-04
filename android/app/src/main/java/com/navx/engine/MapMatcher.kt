@@ -6,7 +6,9 @@ import kotlin.math.hypot
  * Offline Map-Matching filter with Non-Holonomic Constraints (NHC).
  *
  * Snaps the drifting inertial trajectory back onto a road network whenever the
- * estimate is within a belt of a road segment, mimicking an offline OSM layout.
+ * estimate is within a belt of a road segment. In demo mode it uses a synthetic
+ * street grid; in LIVE mode the caller feeds the actual road the vehicle is on
+ * via [setLiveRoads], so dead-reckoning snaps onto the real driven route.
  */
 class MapMatcher(private val spacing: Double = 24.0, private val extent: Double = 168.0) {
 
@@ -23,10 +25,33 @@ class MapMatcher(private val spacing: Double = 24.0, private val extent: Double 
         }
     }
 
+    private var liveSegs: List<Seg>? = null
+
+    fun hasLiveRoads(): Boolean = liveSegs != null
+
+    /** Replaces the road network with the real driven route (ENU XY points in travel order). */
+    fun setLiveRoads(points: List<DoubleArray>) {
+        val segs = ArrayList<Seg>(points.size)
+        var prev: DoubleArray? = null
+        for (p in points) {
+            if (prev != null && hypot(p[0] - prev[0], p[1] - prev[1]) > 0.8) {
+                segs.add(Seg(prev[0], prev[1], p[0], p[1]))
+            }
+            prev = p
+        }
+        liveSegs = if (segs.isEmpty()) null else segs
+    }
+
+    fun clearLiveRoads() {
+        liveSegs = null
+    }
+
+    private fun activeRoads(): List<Seg> = liveSegs ?: roads
+
     fun match(x: Double, y: Double, belt: Double = 3.0): Match {
         var best: Seg? = null
         var bestD = Double.MAX_VALUE
-        for (seg in roads) {
+        for (seg in activeRoads()) {
             val d = distanceToSeg(seg, x, y)
             if (d < bestD) {
                 bestD = d

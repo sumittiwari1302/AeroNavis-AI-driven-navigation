@@ -143,7 +143,9 @@ abstract class TFLiteModel(
 }
 
 /**
- * Velocity estimation model (TCN + LSTM)
+ * Velocity estimation model (TCN + LSTM) - TCN+LSTM with canonical frame
+ * Inputs: acc (1, 200, 3), gyr (1, 200, 3), att0 (1, 3, 3) - device frame, canonicalized internally
+ * Output: velocity (1, 1) - forward velocity in m/s
  */
 class VelocityModel(
     context: Context,
@@ -152,32 +154,52 @@ class VelocityModel(
     interpreter = TFLiteRuntime.createInterpreter(
         context, TFLiteRuntime.MODEL_VELOCITY, delegate
     ),
-    inputShape = intArrayOf(1, 200, 6),  // (1, 200, 6) - 2s window @ 100Hz
-    outputShape = intArrayOf(1, 1),      // (1, 1) velocity scalar
+    // Will be overridden for multi-input
+    inputShape = intArrayOf(1, 200, 3),
+    outputShape = intArrayOf(1, 1),
     inputType = Float::class.java,
     outputType = Float::class.java
 ) {
     companion object {
         const val INPUT_WINDOW = 200  // 2 seconds @ 100Hz
-        const val INPUT_CHANNELS = 6   // acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z
+        const val INPUT_CHANNELS_ACC = 3
+        const val INPUT_CHANNELS_GYR = 3
+        const val ATT0_SIZE = 9
     }
     
     /**
-     * Run velocity inference on IMU window.
-     * @param imuWindow FloatArray of shape [200, 6] - [acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z]
-     * @param att0 Initial attitude matrix (3x3) as flat array of 9 floats
-     * @return VelocityResult(velocity_mps, confidence)
+     * Run velocity inference on IMU window with separate acc/gyr/att0 inputs.
+     * @param accWindow FloatArray of shape [200, 3] - acc_x, acc_y, acc_z in device frame
+     * @param gyrWindow FloatArray of shape [200, 3] - gyr_x, gyr_y, gyr_z in device frame
+     * @param att0 Initial attitude matrix (3x3) as flat array of 9 floats (device -> canonical)
+     * @return Pair(velocity_mps, confidence)
      */
-    fun run(imuWindow: FloatArray, att0: FloatArray): Pair<Float, Float> {
-        // Prepare input: [imu_window(200x6), att0(9)] -> flatten to single input tensor
-        val input = FloatArray(INPUT_WINDOW * INPUT_CHANNELS + 9)
-        System.arraycopy(imuWindow, 0, input, 0, INPUT_WINDOW * INPUT_CHANNELS)
-        System.arraycopy(att0, 0, input, INPUT_WINDOW * INPUT_CHANNELS, 9)
+    fun run(accWindow: FloatArray, gyrWindow: FloatArray, att0: FloatArray): Pair<Float, Float> {
+        // Run multi-input inference: [acc(1,200,3), gyr(1,200,3), att0(1,3,3)]
+        val inputBuffers: Array<ByteBuffer> = arrayOf(
+            floatArrayToByteBuffer(accWindow),
+            floatArrayToByteBuffer(gyrWindow),
+            floatArrayToByteBuffer(att0)
+        )
         
-        val output = run(input)
-        val velocity = output[0]
+        // Resize output buffer
+        outputBuffer.rewind()
+        
+        interpreter.runForMultipleInputsOutputs(inputBuffers, mapOf(0 to outputBuffer))
+        
+        val outputArray = FloatArray(outputShape.reduce { acc, dim -> acc * dim })
+        outputBuffer.rewind()
+        outputBuffer.asFloatBuffer().get(outputArray)
+        
+        val velocity = outputArray[0]
         val confidence = 1.0f // Could add uncertainty head later
-        return Pair(velocity, 1.0f)
+        return Pair(velocity, confidence)
+    }
+    
+    private fun floatArrayToByteBuffer(arr: FloatArray): ByteBuffer {
+        val buf = ByteBuffer.allocateDirect(arr.size * 4).order(ByteOrder.nativeOrder())
+        buf.asFloatBuffer().put(arr).rewind()
+        return buf
     }
 }
 

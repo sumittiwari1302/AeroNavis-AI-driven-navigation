@@ -78,10 +78,21 @@ def compute_att0_from_sequence(seq: NavSequence) -> np.ndarray:
 def forward_velocity_from_truth(
     truth: np.ndarray, center_idx: int, window: int, dt: float
 ) -> tuple[float, float]:
-    """Compute mean forward velocity and displacement over window centered at center_idx.
+    """Mean ground speed and along-path displacement over a window.
 
     truth: (N, 4) columns [x, y, z, heading] at 10 Hz
-    Returns: (vel_mps, disp_m)
+    Returns: (speed_mps, disp_m)
+
+    The label is the *magnitude* of the trajectory step, not the projection onto
+    ``heading``. Projecting onto the stored heading silently corrupts the label
+    because each source's heading lives in a different frame than its position:
+    measured retention of forward/speed was 0.19 (io_vnbd), 0.67 (ronin) and
+    0.97 (idol), with 36% of RoNIN windows landing negative because a carried
+    Tango's yaw does not track the direction the person walks.
+
+    Ground speed is frame-independent, non-negative, and is what a GNSS supplies,
+    so it is the quantity an IMU-only estimator can actually be regressed onto.
+    Heading stays a separate regressed/filtered output.
     """
     half = window // 2
     start = max(0, center_idx - half)
@@ -91,18 +102,16 @@ def forward_velocity_from_truth(
         return 0.0, 0.0
 
     pos = truth[start:end, :2]  # (x, y)
-    heading = truth[start:end, 3]
 
-    # Displacements between consecutive truth points
+    # Per-step displacements; speed is the magnitude, so it stays >= 0.
     dpos = np.diff(pos, axis=0)
-    # Mean heading over interval
-    h_mean = (heading[:-1] + heading[1:]) / 2.0
-    # Forward component of each displacement
-    forward_disp = dpos[:, 0] * np.cos(h_mean) + dpos[:, 1] * np.sin(h_mean)
-    total_disp = float(np.sum(forward_disp))
-    mean_vel = total_disp / ((end - start - 1) * dt) if (end - start - 1) > 0 else 0.0
+    step_disp = np.hypot(dpos[:, 0], dpos[:, 1])
+    total_disp = float(np.sum(step_disp))
 
-    return float(mean_vel), float(total_disp)
+    n_steps = end - start - 1
+    mean_vel = total_disp / (n_steps * dt) if n_steps > 0 else 0.0
+
+    return float(mean_vel), total_disp
 
 
 class VelocityDataset(Dataset):
@@ -216,36 +225,55 @@ def velocity_collate(batch: list[dict]) -> dict:
     }
 
 
+TRAINABLE_SOURCES: tuple[str, ...] = ("io_vnbd", "ronin", "idol", "self_collected")
+
+
 def build_velocity_datasets(
-    config: Config, max_train_seqs: int = 20, max_val_seqs: int = 5
+    config: Config,
+    max_train_seqs: int = 20,
+    max_val_seqs: int = 5,
+    sources: tuple[str, ...] = TRAINABLE_SOURCES,
 ) -> tuple[VelocityDataset, VelocityDataset, VelocityDataset]:
-    """Build train/val/test datasets from Part 1 splits."""
+    """Build train/val/test datasets by unioning every ingested source.
+
+    Splits are computed per source so a single drive never straddles a boundary;
+    the per-source buckets are then unioned. `max_*_seqs` applies per source, so
+    a 121-sequence corpus cannot starve a 43-sequence one.
+    """
     from aeronavis.data.preprocess import NavSequence
-
-    # Load sequences from processed cache
-    processed_root = Path(config.paths.processed)
-    train_seqs = []
-    val_seqs = []
-    test_seqs = []
-
-    # For now, use io_vnbd sequences (vehicle data)
-    source = "io_vnbd"
-    cache_root = processed_root / source
-    if not cache_root.exists():
-        raise RuntimeError(f"Processed cache not found at {cache_root}. Run Part 1 first.")
-
-    all_seqs = NavSequence.load_all(cache_root)
-    logger.info(f"Loaded {len(all_seqs)} sequences from {cache_root}")
-
-    # Split by drive_id (same logic as Part 1)
     from aeronavis.data.splits import make_splits
 
-    buckets = make_splits(all_seqs, config.splits)
+    processed_root = Path(config.paths.processed)
 
-    train_seqs = buckets["train"][:max_train_seqs]
-    val_seqs = buckets["val"][:max_val_seqs]
-    test_seqs = buckets["test"][:max_val_seqs]
+    train_seqs: list[NavSequence] = []
+    val_seqs: list[NavSequence] = []
+    test_seqs: list[NavSequence] = []
+    found: list[str] = []
 
+    for source in sources:
+        cache_root = processed_root / source
+        if not cache_root.exists():
+            logger.info(f"{source}: no processed cache at {cache_root}, skipped")
+            continue
+        all_seqs = NavSequence.load_all(cache_root)
+        if not all_seqs:
+            logger.info(f"{source}: processed cache is empty, skipped")
+            continue
+
+        found.append(source)
+        logger.info(f"Loaded {len(all_seqs)} sequences from {cache_root}")
+
+        buckets = make_splits(all_seqs, config.splits)
+        train_seqs.extend(buckets["train"][:max_train_seqs])
+        val_seqs.extend(buckets["val"][:max_val_seqs])
+        test_seqs.extend(buckets["test"][:max_val_seqs])
+
+    if not found:
+        raise RuntimeError(
+            f"No processed caches found under {processed_root} for {sources}. Run Part 1 first."
+        )
+
+    logger.info(f"Training sources: {', '.join(found)}")
     logger.info(
         f"Using {len(train_seqs)} train, {len(val_seqs)} val, {len(test_seqs)} test sequences"
     )

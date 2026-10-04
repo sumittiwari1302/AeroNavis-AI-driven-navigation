@@ -1,4 +1,6 @@
 .venv/
+.venv_tflite/
+.idea/
 __pycache__/
 *.pyc
 *.pt

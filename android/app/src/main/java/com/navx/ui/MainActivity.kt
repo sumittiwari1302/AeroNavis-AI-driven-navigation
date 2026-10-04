@@ -1,10 +1,15 @@
 package com.navx.ui
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Bundle
@@ -12,6 +17,8 @@ import android.view.View
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.navx.R
 import com.navx.engine.AlignmentEngine
@@ -19,18 +26,19 @@ import com.navx.engine.MapMatcher
 import com.navx.engine.OutageDetector
 import com.navx.engine.SpeedFilter
 import com.navx.fusion.InEKF
-import com.navx.fusion.ModelTrainer
 import com.navx.fusion.InEKFConfig
 import com.navx.fusion.WheelMeasurement
-import java.net.HttpURLConnection
-import java.net.URL
+import com.navx.inference.MLVelocityEstimator
+import com.navx.inference.TFLiteRuntime
+import com.navx.live.CompassHeading
+import com.navx.sensors.NavDataFrame
+import com.navx.sensors.SensorHub
 import kotlin.math.cos
 import kotlin.math.hypot
-import kotlin.math.sin
-import kotlin.random.Random
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -56,6 +64,10 @@ class MainActivity : AppCompatActivity() {
 
         private const val RC_MODE = 1001
         private const val RC_CAL = 1002
+        private const val RC_LOCATION = 2001
+
+        /** A fix older than this is treated as GNSS LOST → dead-reckoning takeover. */
+        private const val GNSS_LOST_TIMEOUT_MS = 3500L
 
         data class Cal(
             val accBiasX: Double,
@@ -66,74 +78,50 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private val gt = DoubleArray(3)
-    private var gtSpeed = 0.0
-    private var prevSpeed = 0.0
-    private var prevGtYaw = 0.0
-    private var tSec = 0.0
-    private var distTraveled = 0.0
-    private var segIdx = 0
-    private var along = 0.0
-
-    // The vehicle drives a city-block circuit that hugs the offline street grid
-    // (rounded corners, max ~5 m off the roads). Map-matching is therefore
-    // exact through both tunnel blackouts, and the blue route line follows the
-    // streets exactly like Google Maps.
-    private val routeWp: Array<DoubleArray> = buildRoute()
-
-    private fun buildRoute(): Array<DoubleArray> {
-        val R = 16.0
-        val arcN = 10
-        val pts = ArrayList<DoubleArray>()
-        pts.add(doubleArrayOf(0.0, -96.0))
-        arc(pts, 96.0, -96.0, 1.0, 0.0, R, arcN)   // bottom-right: east -> north
-        arc(pts, 96.0, 96.0, 0.0, 1.0, R, arcN)    // top-right: north -> west
-        arc(pts, -96.0, 96.0, -1.0, 0.0, R, arcN)  // top-left: west -> south
-        arc(pts, -96.0, -96.0, 0.0, -1.0, R, arcN) // bottom-left: south -> east
-        return pts.toTypedArray()
-    }
-
-    private fun arc(
-        pts: MutableList<DoubleArray>,
-        cx: Double, cy: Double,
-        ux: Double, uy: Double,
-        R: Double, n: Int
-    ) {
-        val nx = -uy
-        val ny = ux
-        val cX = cx - R * ux + R * nx
-        val cY = cy - R * uy + R * ny
-        val t0 = Math.atan2(-ux, uy)
-        for (k in 1..n) {
-            val t = t0 + (Math.PI / 2.0) * k / n
-            pts.add(doubleArrayOf(cX + R * Math.cos(t), cY + R * Math.sin(t)))
-        }
-    }
-
+    // ---- Live navigation state -------------------------------------------------
     private var inEKF = InEKF(InEKFConfig())
-    private val rng = Random(42)
-
     private val alignment = AlignmentEngine()
     private val speedFilter = SpeedFilter()
     private val outageDetector = OutageDetector()
     private val mapMatcher = MapMatcher()
-    private val modelTrainer = ModelTrainer()
+    private val compass = CompassHeading()
+    private var mlVelocityEstimator: MLVelocityEstimator? = null
 
-    private var job: Job? = null
-    private var paused = false
-    private var manualBlackout = false
-    private var lastGnssFixMs = 0L
+    // Serialized raw GPS position (ENU meters) + fused estimate marker.
+    private val rawGps = DoubleArray(3)
+    private var distTraveled = 0.0
+
+    // Live data sources.
+    private var sensorHub: SensorHub? = null
+    private lateinit var locationManager: LocationManager
+    private var gpsFix: Location? = null
+    private var lastGpsFixMs = 0L
+    private var lastGpsSpeed = 0.0
+    private var liveOriginLat: Double? = null
+    private var liveOriginLng: Double? = null
+    private var lastImuFrame: NavDataFrame? = null
+    private var lastTickMs = 0L
     private var lastMapMatchMs = 0L
+    private var lastCompassCorrMs = 0L
+    private var lastSkeletonFeedMs = 0L
+    private var lastBenchmarkLoggedAt = 0L
     private var recoveredFlashUntil = 0L
-    private var alignedLogged = false
-    private var mapMatchLogged = false
     private var lastVibCount = 0L
-    private var lastBenchmarkLoggedAt = 0.0
+    private var yawOffsetLearned = 0.0
+    private var yawOffSamples = 0
+    private var yawOffsetLogged = false
 
+    // The real road the vehicle is driving on (trail of live positions).
+    private val liveRoadPts = ArrayDeque<DoubleArray>()
     private val gtPath = ArrayDeque<FloatArray>()
     private val estPath = ArrayDeque<FloatArray>()
     private val routePath = ArrayDeque<FloatArray>()
     private val log = ArrayDeque<String>()
+
+    private var job: Job? = null
+    private var paused = false
+    private var manualBlackout = false
+    private var liveStarted = false
 
     private lateinit var navCanvas: NavSatView
     private lateinit var tvModeChip: TextView
@@ -170,11 +158,6 @@ class MainActivity : AppCompatActivity() {
     private var locLat = 12.9716
     private var locLng = 77.5946
 
-    // Per-unit sensor imperfections this run's trainer has to cancel.
-    private var simGyroBiasRad = 0.0
-    private var simWheelScale = 1.0
-    private var trainedLogged = false
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -207,11 +190,13 @@ class MainActivity : AppCompatActivity() {
         tvIntro = findViewById(R.id.tvIntro)
         tvLive = findViewById(R.id.tvLive)
 
-        btnStart.setOnClickListener { startDemo() }
+        locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+
+        btnStart.setOnClickListener { startLive() }
         btnPause.setOnClickListener { togglePause() }
-        btnStop.setOnClickListener { stopDemo() }
+        btnStop.setOnClickListener { stopLive() }
         btnBlackout.setOnClickListener { toggleBlackout() }
-        btnReset.setOnClickListener { resetDemo() }
+        btnReset.setOnClickListener { resetLive() }
         btnMapType.setOnClickListener { toggleMapType() }
         btnMode.setOnClickListener {
             startActivityForResult(Intent(this, ModeSelectActivity::class.java), RC_MODE)
@@ -221,9 +206,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         reloadModeAndCal()
-
         applyLocation()
-        pushLog("• NAV-X 3.0 ready — AI + GNSS/INS fusion demo")
+        ensurePermissions()
+        pushLog("• NAV-X 3.0 LIVE — real smartphone IMU + GPS fusion (no synthetic data)")
     }
 
     override fun onStart() {
@@ -248,56 +233,128 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopLive()
         navCanvas.onViewDestroy()
     }
 
-    private fun startDemo() {
-        if (job != null) return
+    // ---- Permissions -----------------------------------------------------------
+    private fun ensurePermissions() {
+        if (hasLocationPermission()) return
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ),
+            RC_LOCATION
+        )
+    }
+
+    private fun hasLocationPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == RC_LOCATION) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                pushLog("✓ Location permission granted — GNSS fixes enabled")
+            } else {
+                pushLog("⚠ Location permission DENIED — no GNSS · IMU-only dead-reckoning will still run")
+            }
+        }
+    }
+
+    // ---- Live track start / pause / stop / reset --------------------------------
+    private fun startLive() {
+        if (job != null || liveStarted) return
+        if (!hasLocationPermission()) {
+            pushLog("⚠ Location permission needed for GNSS — grant it, then press START ▶")
+            ensurePermissions()
+            return
+        }
+        liveStarted = true
         paused = false
         alignedLogged = false
         mapMatchLogged = false
         inEKF = InEKF(InEKFConfig())
-        inEKF.setPose(0.0, -96.0, 0.0)
-        for (i in gt.indices) gt[i] = 0.0
-        gt[0] = 0.0
-        gt[1] = -96.0
-        gtSpeed = 0.0
-        prevSpeed = 0.0
-        prevGtYaw = 0.0
-        tSec = 0.0
-        distTraveled = 0.0
-        segIdx = 0
-        along = 0.0
-        manualBlackout = false
+        inEKF.setPose(0.0, 0.0, 0.0)
+        alignment.reset()
         speedFilter.reset()
-        modelTrainer.reset()
-        simGyroBiasRad = (rng.nextDouble() - 0.5) * Math.toRadians(0.3)
-        simWheelScale = 1.0 + (rng.nextDouble() - 0.5) * 0.04
-        trainedLogged = false
+        compass.reset()
+        mapMatcher.clearLiveRoads()
+        liveRoadPts.clear()
         gtPath.clear()
         estPath.clear()
         routePath.clear()
         log.clear()
-        lastGnssFixMs = 0L
+        manualBlackout = false
+        distTraveled = 0.0
+        rawGps[0] = 0.0; rawGps[1] = 0.0; rawGps[2] = 0.0
+        lastGpsSpeed = 0.0
+        lastGpsFixMs = 0L
         lastMapMatchMs = 0L
-        pushLog("• START — vehicle in motion · calibrating phone alignment…")
-        when (curMode) {
-            MODE_LORA -> pushLog("🧲 LoRA weights applied live → bias x${"%.2f".format(cal.accBiasX)}, y${"%.2f".format(cal.accBiasY)} · scale ${"%.3f".format(cal.wheelScale)}")
-            MODE_FLEET -> pushLog("🚚 Fleet profile FLD-042 · standardized constants · no per-vehicle tuning")
-            else -> pushLog("🛠 Dev/Integrator mode · full telemetry + adapters exposed")
+        lastCompassCorrMs = 0L
+        lastSkeletonFeedMs = 0L
+        lastBenchmarkLoggedAt = 0L
+        lastTickMs = System.currentTimeMillis()
+        recoveredFlashUntil = 0L
+        lastVibCount = 0L
+        yawOffsetLearned = 0.0
+        yawOffSamples = 0
+        yawOffsetLogged = false
+        lastImuFrame = null
+
+        // Fallback origin = chosen city anchor until the first real satellite fix.
+        if (liveOriginLat == null) {
+            liveOriginLat = locLat
+            liveOriginLng = locLng
         }
+
+        sensorHub = SensorHub(this, this).also { it.start() }
+        lifecycleScope.launch(Dispatchers.Default) {
+            sensorHub?.dataFlow?.collect { f -> lastImuFrame = f }
+        }
+
+        compass.updateDeclination(liveOriginLat!!, liveOriginLng!!, 0.0, System.currentTimeMillis())
+
+        // Initialize ML velocity estimator (TFLite model)
+        mlVelocityEstimator = MLVelocityEstimator(this, TFLiteRuntime.Delegate.CPU)
+        pushLog("🤖 ML velocity model loaded (TCN+LSTM, 200-sample window)")
+
+        // Seed with last known satellite fix if the app was open before.
+        try {
+            val last = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            if (last != null && System.currentTimeMillis() - last.time < 60_000L) {
+                onGpsFix(last)
+            }
+        } catch (_: SecurityException) {
+        }
+        runCatching {
+            locationManager.requestLocationUpdates(
+                LocationManager.GPS_PROVIDER, 1000L, 0f, gpsListener
+            )
+        }
+
+        pushLog("📡 LIVE TRACKING ON — real accelerometer + gyroscope + magnetometer · GPS fixes at 1 Hz")
+        pushLog("📍 Dead-reckoning auto-arms when GNSS drops · map-matching on the driven road")
         runLoop()
         btnStart.isEnabled = false
         btnPause.isEnabled = true
         btnPause.text = "PAUSE"
-        tvLive.text = "RUNNING\n20 Hz"
+        tvLive.text = "LIVE\n20 Hz"
         tvIntro.visibility = View.GONE
+        tvStatus.text = "Waiting for first GNSS fix…"
     }
 
     private fun runLoop() {
         job = lifecycleScope.launch {
             while (true) {
-                stepSim()
+                stepLive()
                 delay(50)
             }
         }
@@ -317,31 +374,456 @@ class MainActivity : AppCompatActivity() {
             pushLog("▶ RESUMED")
             runLoop()
             btnPause.text = "PAUSE"
-            tvLive.text = "RUNNING\n20 Hz"
+            tvLive.text = "LIVE\n20 Hz"
         }
     }
 
-    private fun stopDemo() {
+    private fun stopLive() {
         job?.cancel()
         job = null
         paused = false
-        btnStart.isEnabled = true
-        btnPause.isEnabled = false
-        btnPause.text = "PAUSE"
-        tvLive.text = "IDLE\n20 Hz"
-        tvIntro.visibility = View.VISIBLE
-        tvIntro.text = "🔹 Ready again — press START ▶ to drive another run (auto tunnels + BLACKOUT button)."
-        pushLog("■ STOP — session ended")
+        sensorHub?.stop()
+        sensorHub = null
+        mlVelocityEstimator?.close()
+        mlVelocityEstimator = null
+        runCatching { locationManager.removeUpdates(gpsListener) }
+        if (liveStarted) {
+            liveStarted = false
+            btnStart.isEnabled = true
+            btnPause.isEnabled = false
+            btnPause.text = "PAUSE"
+            tvLive.text = "IDLE\n20 Hz"
+            tvIntro.visibility = View.VISIBLE
+            tvIntro.text = "🔹 Ready — press START ▶ to begin real live tracking (car/tunnel test)."
+            pushLog("■ STOP — live session ended")
+        }
     }
 
     private fun toggleBlackout() {
         manualBlackout = !manualBlackout
         if (manualBlackout) {
-            pushLog("⚠ MANUAL BLACKOUT — forcing GNSS outage (jamming test)")
+            pushLog("⚠ MANUAL BLACKOUT — forcing GNSS outage (jamming test · GPS signal ignored)")
         } else {
             pushLog("✓ BLACKOUT cleared — GNSS restored")
         }
     }
+
+    private fun resetLive() {
+        stopLive()
+        liveOriginLat = null
+        liveOriginLng = null
+        inEKF = InEKF(InEKFConfig())
+        inEKF.setPose(0.0, 0.0, 0.0)
+        distTraveled = 0.0
+        rawGps[0] = 0.0; rawGps[1] = 0.0; rawGps[2] = 0.0
+        alignment.reset()
+        speedFilter.reset()
+        mapMatcher.clearLiveRoads()
+        liveRoadPts.clear()
+        gtPath.clear()
+        estPath.clear()
+        routePath.clear()
+        log.clear()
+        lastVibCount = 0L
+        pushLog("• RESET — all state cleared · origin will re-lock on the next GNSS fix")
+    }
+
+    // ---- GPS receiver -----------------------------------------------------------
+    private val gpsListener = object : LocationListener {
+        override fun onLocationChanged(location: Location) {
+            onGpsFix(location)
+        }
+
+        override fun onProviderEnabled(provider: String) {
+            pushLog("📡 GPS provider enabled — waiting for satellite fixes…")
+        }
+
+        override fun onProviderDisabled(provider: String) {
+            if (provider == LocationManager.GPS_PROVIDER) {
+                gpsFix = null
+                pushLog("🛑 GPS provider disabled — dead-reckoning only")
+            }
+        }
+
+        override fun onStatusChanged(provider: String, status: Int, extras: Bundle) {}
+    }
+
+    private fun onGpsFix(location: Location) {
+        gpsFix = location
+        lastGpsFixMs = System.currentTimeMillis()
+        if (liveOriginLat == null) {
+            // Lock the ENU origin & map anchor on the very first real satellite fix.
+            liveOriginLat = location.latitude
+            liveOriginLng = location.longitude
+            navCanvas.setLocation(location.latitude, location.longitude)
+            compass.updateDeclination(location.latitude, location.longitude, location.altitude, System.currentTimeMillis())
+            if (!liveStarted) return
+            val (x, y) = geoToEnu(location.latitude, location.longitude)
+            inEKF.setPose(x, y, inEKF.heading())
+            pushLog("🎯 GNSS origin locked at ${"%.5f".format(location.latitude)}, ${"%.5f".format(location.longitude)} — satellite-denied tracking starts from here")
+        }
+    }
+
+    private fun hasLiveGnss(now: Long): Boolean =
+        gpsFix != null &&
+            (now - lastGpsFixMs) < GNSS_LOST_TIMEOUT_MS &&
+            locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+
+    private fun geoToEnu(lat: Double, lng: Double): Pair<Double, Double> {
+        val lat0 = liveOriginLat ?: locLat
+        val lng0 = liveOriginLng ?: locLng
+        val c = cos(Math.toRadians(lat0))
+        val x = (lng - lng0) * 111320.0 * c
+        val y = (lat - lat0) * 110540.0
+        return x to y
+    }
+
+    // ---- Live dead-reckoning + fusion step --------------------------------------
+    private fun stepLive() {
+        val now = System.currentTimeMillis()
+        if (lastTickMs == 0L) lastTickMs = now
+        val dt = ((now - lastTickMs) / 1000.0).coerceIn(0.01, 0.25).toFloat()
+        lastTickMs = now
+
+        val frame = lastImuFrame
+        val gnssOk = hasLiveGnss(now)
+        val gnssNow = gnssOk && !manualBlackout
+
+        if (frame != null) {
+            compass.refresh(frame)
+            if (!alignment.isCalibrated) {
+                alignment.feed(frame.accel[0].toDouble(), frame.accel[1].toDouble(), frame.accel[2].toDouble())
+            }
+            if (!imuLogged) {
+                imuLogged = true
+                pushLog("🧭 IMU streams live — accel [${"%.2f".format(frame.accel[0])}, ${"%.2f".format(frame.accel[1])}, ${"%.2f".format(frame.accel[2])}] · gyr [${"%.3f".format(frame.gyro[0])}, ${"%.3f".format(frame.gyro[1])}, ${"%.3f".format(frame.gyro[2])}] · magnetometer ${if (frame.mag[0] != 0f || frame.mag[1] != 0f || frame.mag[2] != 0f) "present" else "absent (DR uses gyro+map-match)"}")
+            }
+            
+            // Feed IMU to ML velocity estimator (runs inference every ~1s)
+            val mlResult = mlVelocityEstimator?.addSample(frame)
+            if (mlResult != null) {
+                val (mlVel, mlConf) = mlResult
+                pushLog("🤖 ML velocity: ${"%.2f".format(mlVel)} m/s (conf: ${"%.0f".format(mlConf * 100)}%)")
+            }
+        }
+
+        // ---- Real IMU prediction: accelerometer + gyroscope (calibration biases) ----
+        val acc = if (frame != null)
+            floatArrayOf(
+                frame.accel[0] - cal.accBiasX.toFloat(),
+                frame.accel[1] - cal.accBiasY.toFloat(),
+                frame.accel[2]
+            ) else floatArrayOf(0f, 0f, 9.8f)
+        val gyr = if (frame != null) floatArrayOf(
+            frame.gyro[0],
+            frame.gyro[1],
+            frame.gyro[2] - cal.gyrBiasZRad.toFloat()
+        ) else floatArrayOf(0f, 0f, 0f)
+        inEKF.predict(acc, gyr, dt)
+
+        // ---- GNSS / outage transition logging ----
+        if (outageDetector.update(gnssNow, now)) {
+            if (gnssNow) {
+                recoveredFlashUntil = now + 2500L
+                mapMatchLogged = false
+                pushLog("✓ GNSS RE-ACQUIRED → GNSS+INS fusion resumes · re-anchoring")
+            } else {
+                recoveredFlashUntil = 0L
+                mapMatchLogged = false
+                pushLog(
+                    if (manualBlackout)
+                        "⚠ MANUAL BLACKOUT → dead-reckoning on · IMU + map-match keep you on road"
+                    else
+                        "⚠ GNSS LOST → DEAD RECKONING · IMU integration + map-match keep you on road"
+                )
+            }
+        }
+
+        // ---- Forward speed source (odometry / NHC wheel proxy) ----
+        val mlReady = mlVelocityEstimator?.isReady() == true
+        val mlVel = mlVelocityEstimator?.getLastVelocity() ?: 0f
+        
+        // ---- Forward speed source (odometry / NHC wheel proxy) ----
+        val vx: Double = if (gnssNow && gpsFix != null && gpsFix!!.hasSpeed()) {
+            gpsFix!!.speed.toDouble().coerceIn(0.0, 45.0).also { lastGpsSpeed = it }
+        } else if (!gnssNow && mlReady) {
+            // Use ML velocity during GNSS outage (primary source)
+            mlVel.toDouble().coerceIn(0.0, 45.0)
+        } else if (frame != null) {
+            // Fallback to physics-based SpeedFilter
+            speedFilter.estimate(frame.accel[0], dt, lastGpsSpeed).coerceIn(0.0, 45.0)
+        } else {
+            lastGpsSpeed.coerceIn(0.0, 45.0)
+        }
+        inEKF.correctWheel(WheelMeasurement(timestamp = now, vxBody = vx.toFloat()))
+        distTraveled += hypot(vx, 0.0) * dt
+
+        var aiMode = when {
+            gnssNow -> "GNSS+INS FUSION"
+            mlReady -> "DR + ML VELOCITY"
+            else -> "DEAD-RECKONING (NHC)"
+        }
+
+        // ---- Raw GNSS measurement ----
+        if (gnssNow && gpsFix != null) {
+            val loc = gpsFix!!
+            val (x, y) = geoToEnu(loc.latitude, loc.longitude)
+            rawGps[0] = x
+            rawGps[1] = y
+            val courseKnown = loc.hasBearing() && !loc.bearing.isNaN() && loc.hasSpeed() && loc.speed > 1.5f
+            val courseYaw = if (courseKnown) Math.toRadians(90.0 - loc.bearing) else inEKF.heading()
+            if (courseKnown) {
+                learnYawOffset(courseYaw)
+            }
+            inEKF.correctGnss(doubleArrayOf(x, y, courseYaw))
+            pushLiveRoad(x, y)
+        }
+
+        // ---- Magnetometer absolute heading (compass) measurement ----
+        if (now - lastCompassCorrMs >= 1000L && compass.hasData()) {
+            val st = inEKF.state()
+            val magYaw = magYawCorrected()
+            if (magYaw != null) {
+                lastCompassCorrMs = now
+                val rYaw = Math.toRadians(7.0) * Math.toRadians(7.0)
+                // Huge R on x/y: only the heading channel matters for GNSS-denied drift.
+                inEKF.correctGnss(doubleArrayOf(st[0], st[1], magYaw), doubleArrayOf(1e3, 1e3, rYaw))
+            }
+        }
+
+        // ---- Dead-reckoning map-match correction (GNSS-denied) ----
+        var offRoad = 0.0
+        if (!gnssNow) {
+            val st = inEKF.state()
+            if (now - lastMapMatchMs >= 150L) {
+                lastMapMatchMs = now
+                val mm = mapMatcher.match(st[0], st[1], cal.beltM)
+                offRoad = mm.offRoad
+                if (mapMatcher.hasLiveRoads() && mm.snapped) {
+                    inEKF.correctGnss(doubleArrayOf(mm.x, mm.y, st[2]), doubleArrayOf(6.0, 6.0, 1e-3))
+                    if (mlReady) aiMode = "DR + ML VEL + MAP-MATCH"
+                    else aiMode = "DR + MAP-MATCH"
+                    if (!mapMatchLogged) {
+                        mapMatchLogged = true
+                        pushLog("📍 Map-matched → snapped onto the driven road (NHC + lane-keeping)")
+                    }
+                    pushLiveRoad(mm.x, mm.y)
+                } else {
+                    // Keep the ML velocity mode if active, otherwise show DR mode
+                    if (!mlReady) aiMode = "DEAD-RECKONING (NHC)"
+                    // Extend the road skeleton from DR positions only while they stay near
+                    // the known road — otherwise a drifted estimate would poison future snaps.
+                    if (!mapMatcher.hasLiveRoads()) {
+                        pushLiveRoad(st[0], st[1])
+                    } else if (offRoad < cal.beltM * 1.5) {
+                        pushLiveRoad(st[0], st[1])
+                    }
+                }
+            }
+        }
+
+        // ---- Vibration filter logging (real potholes/shocks) ----
+        val vib = speedFilter.vibrationCount()
+        if (vib != lastVibCount && vib > 0 && vib % 8 == 0L) {
+            lastVibCount = vib
+            pushLog("🌀 Vibration filter — suppressed $vib road-noise events")
+        }
+
+        // ---- Periodic DRIFT benchmark while GNSS is down ----
+        if (!gnssNow && distTraveled > 1.0 && (now - lastBenchmarkLoggedAt > 8000L)) {
+            lastBenchmarkLoggedAt = now
+            val st = inEKF.state()
+            val err = offRoad
+            val pct = (err / distTraveled.coerceAtLeast(1.0)) * 100.0
+            pushLog("📊 DRIFT ${"%.1f".format(err)} m off-road over ${"%.0f".format(distTraveled)} m = ${"%.1f".format(pct)}% · IMU + map-match holding")
+        }
+
+        if (!alignment.isCalibrated && !alignedLogged) {
+            pushLog("✓ Phone alignment (static) — pitch ${"%.1f".format(alignment.pitchDeg())}° roll ${"%.1f".format(alignment.rollDeg())}° · holder tilt only, DR uses motion yaw")
+            alignedLogged = true
+        }
+        if (compass.hasData() && !yawOffsetLogged && yawOffSamples >= 30) {
+            yawOffsetLogged = true
+            pushLog("🧭 Compass ↔ GNSS-course aligned — static yaw offset ${"%.1f".format(Math.toDegrees(yawOffsetLearned))}°")
+        }
+
+        // ---- Paths + UI ----
+        val est = inEKF.state()
+        pushPath(gtPath, rawGps[0], rawGps[1])
+        pushPath(estPath, est[0], est[1])
+        val snap = if (mapMatcher.hasLiveRoads()) {
+            val m = mapMatcher.match(est[0], est[1], 30.0)
+            if (m.snapped) doubleArrayOf(m.x, m.y) else est.sliceArray(0..1)
+        } else {
+            est.sliceArray(0..1)
+        }
+        pushPath(routePath, snap[0], snap[1])
+
+        val gnssAgeS = (now - lastGpsFixMs) / 1000.0
+        val err = if (gnssNow) hypot(rawGps[0] - est[0], rawGps[1] - est[1]) else offRoad
+        val sigma = hypot(inEKF.stdX(), inEKF.stdY())
+        val headingDeg = normDeg(Math.toDegrees(inEKF.heading()))
+        val driftPct = if (distTraveled > 1.0) err / distTraveled * 100.0 else 0.0
+
+        val mode = when {
+            now < recoveredFlashUntil -> 2
+            gnssNow -> 0
+            else -> 1
+        }
+
+        runOnUiThread { updateUi(mode, gnssNow, gnssAgeS, sigma, err, headingDeg, driftPct, aiMode) }
+    }
+
+    private fun magYawCorrected(): Double? {
+        val base = compass.headingYawRad() ?: return null
+        val v = base + yawOffsetLearned
+        return wrapAngle(v)
+    }
+
+    /** Learns the constant phone↔vehicle yaw offset from GNSS course vs compass. */
+    private fun learnYawOffset(courseYaw: Double) {
+        val magYaw = compass.headingYawRad() ?: return
+        if (yawOffSamples >= 400) return
+        val sample = wrapAngle(courseYaw - magYaw)
+        yawOffSamples++
+        val w = 0.06
+        yawOffsetLearned = wrapAngle(yawOffsetLearned * (1.0 - w) + sample * w)
+    }
+
+    // ---- Live road skeleton for map matching -------------------------------------
+    private fun pushLiveRoad(x: Double, y: Double) {
+        val last = liveRoadPts.lastOrNull()
+        if (last == null || hypot(x - last[0], y - last[1]) >= 2.5) {
+            liveRoadPts.addLast(doubleArrayOf(x, y))
+            while (liveRoadPts.size > 700) liveRoadPts.removeFirst()
+            feedSkeletonIfDirty()
+        } else if (liveRoadPts.size < 3) {
+            feedSkeletonIfDirty()
+        }
+    }
+
+    private fun feedSkeletonIfDirty() {
+        val now = System.currentTimeMillis()
+        if (now - lastSkeletonFeedMs < 500L) return
+        lastSkeletonFeedMs = now
+        if (liveRoadPts.size < 2) return
+        mapMatcher.setLiveRoads(liveRoadPts.toList())
+    }
+
+    // ---- UI ----------------------------------------------------------------------
+    private fun updateUi(
+        mode: Int,
+        gnssNow: Boolean,
+        gnssAgeS: Double,
+        err: Double,
+        sigma: Double,
+        headingDeg: Double,
+        driftPct: Double,
+        aiMode: String
+    ) {
+        val est = inEKF.state()
+        val mlReady = mlVelocityEstimator?.isReady() == true
+        val mlVel = mlVelocityEstimator?.getLastVelocity() ?: 0f
+        val mlInferences = mlVelocityEstimator?.getInferenceCount() ?: 0L
+
+        when (mode) {
+            0 -> {
+                tvModeChip.text = "GNSS ACTIVE"
+                tvModeChip.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#0A2E36"))
+                tvModeChip.setTextColor(Color.parseColor("#38BDF8"))
+                tvStatus.text = "🟢 GNSS ACTIVE · GPS + IMU fused · σ = ${"%.1f".format(sigma)} m · GPS age ${"%.0f".format(gnssAgeS)}s"
+                tvStatus.setTextColor(Color.parseColor("#A7F3D0"))
+                setDot(dotGps, Color.parseColor("#4CAF50"))
+            }
+            1 -> {
+                tvModeChip.text = "GNSS LOST"
+                tvModeChip.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#3A1A1A"))
+                tvModeChip.setTextColor(Color.parseColor("#FF6B6B"))
+                val mlStr = if (mlReady) " · ML vel: ${"%.2f".format(mlVel)} m/s (#$mlInferences)" else ""
+                tvStatus.text = "🔴 GNSS LOST · DEAD RECKONING${mlStr} · σ = ${"%.1f".format(sigma)} m · GPS age ${"%.0f".format(gnssAgeS)}s"
+                tvStatus.setTextColor(Color.parseColor("#FFB4AB"))
+                setDot(dotGps, Color.parseColor("#FF5252"))
+            }
+            else -> {
+                tvModeChip.text = "REACQUIRED"
+                tvModeChip.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#1E3A2A"))
+                tvModeChip.setTextColor(Color.parseColor("#4ADE80"))
+                tvStatus.text = "🟢 GPS RE-ACQUIRED · position re-anchored · fusion resumed · σ = ${"%.1f".format(sigma)} m"
+                tvStatus.setTextColor(Color.parseColor("#A7F3D0"))
+                setDot(dotGps, Color.parseColor("#4CAF50"))
+            }
+        }
+
+        tvSpeed.text = String.format("%.1f", inEKF.velocity()[0])
+        tvHeading.text = String.format("%.0f", headingDeg)
+        tvPosErr.text = String.format("%.1f", err)
+        tvSigma.text = String.format("%.1f", sigma)
+        tvDist.text = String.format("%.0f", distTraveled)
+        tvDrift.text = String.format("%.1f%%", driftPct)
+        tvDrift.setTextColor(
+            if (driftPct < 10.0) Color.parseColor("#4ADE80") else Color.parseColor("#FF6B6B")
+        )
+        tvAiMode.text = aiMode
+
+        val curLat = liveOriginLat?.plus(est[1] / 110540.0) ?: locLat
+        val curLng = liveOriginLng?.plus(est[0] / (111320.0 * cos(Math.toRadians(liveOriginLat ?: locLat)))) ?: locLng
+        tvLoc.text = if (gnssNow)
+            "📍 ${"%.5f".format(curLat)}, ${"%.5f".format(curLng)} · GPS LIVE"
+        else
+            "📍 ${"%.5f".format(curLat)}, ${"%.5f".format(curLng)} · DEAD-RECKON"
+
+        setDot(dotImu, Color.parseColor("#4CAF50"))
+        setDot(dotPsd, Color.parseColor("#4CAF50"))
+        setDot(dotTex, if (mode == 1) Color.parseColor("#FFB74D") else Color.parseColor("#4CAF50"))
+        setDot(dotAi, Color.parseColor("#A78BFA"))
+
+        navCanvas.setScene(
+            NavSatView.Scene(
+                gtX = rawGps[0], gtY = rawGps[1],
+                estX = est[0], estY = est[1],
+                stdX = inEKF.stdX(), stdY = inEKF.stdY(),
+                yaw = inEKF.heading(),
+                mode = mode,
+                gtPath = gtPath.toList(),
+                estPath = estPath.toList(),
+                route = routePath.toList()
+            )
+        )
+    }
+
+    private fun setDot(v: View, color: Int) {
+        v.backgroundTintList = ColorStateList.valueOf(color)
+    }
+
+    private fun pushPath(q: ArrayDeque<FloatArray>, x: Double, y: Double) {
+        q.addLast(floatArrayOf(x.toFloat(), y.toFloat()))
+        while (q.size > 1600) q.removeFirst()
+    }
+
+    private fun pushLog(msg: String) {
+        log.addFirst(msg)
+        while (log.size > 6) log.removeLast()
+        tvLog.text = log.joinToString("\n")
+        android.util.Log.d("NAVX", msg.replace("\n", " | "))
+    }
+
+    private fun normDeg(a: Double): Double {
+        var v = a
+        while (v >= 360.0) v -= 360.0
+        while (v < 0.0) v += 360.0
+        return v
+    }
+
+    private fun wrapAngle(a: Double): Double {
+        var v = a
+        while (v > Math.PI) v -= 2 * Math.PI
+        while (v <= -Math.PI) v += 2 * Math.PI
+        return v
+    }
+
+    private var alignedLogged = false
+    private var mapMatchLogged = false
+    private var imuLogged = false
 
     private fun toggleMapType() {
         val next = if (navCanvas.mapType() == NavSatView.MAP_SATELLITE)
@@ -363,7 +845,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadCal(prefs: SharedPreferences): Cal {
         if (curMode == MODE_FLEET) {
-            // Locked fleet profile: automated adaptation, standard constants.
             return Cal(0.0, 0.0, 0.0, 1.02, 10.0)
         }
         val gzDeg = prefs.getFloat(KEY_GYR_Z, 0f).toDouble()
@@ -418,304 +899,9 @@ class MainActivity : AppCompatActivity() {
         locName = if (n.isEmpty()) "${"%.4f".format(locLat)}°N, ${"%.4f".format(locLng)}°E" else n
         navCanvas.setLocation(locLat, locLng)
         tvLoc.text = "📍 $locName · ${if (isOnline()) "online" else "offline"}"
-        tvIntro.text = "🔹 Map anchored at $locName. Press START ▶ — the demo vehicle drives the city block; GPS cuts in tunnels automatically."
+        tvIntro.text = "🔹 LIVE TRACKING — phone cocktail-dash me rkho, GPS tunnel me cut hota hai (apne aap detect), IMU + magnetometer + map-match tumhe road pe rakhte hain. Press START ▶."
         tvIntro.visibility = View.VISIBLE
         tvStatus.text = "Setup ready · press START ▶"
-        pushLog("• Real map anchored at $locName")
-    }
-
-    private fun resetDemo() {
-        stopDemo()
-        inEKF = InEKF(InEKFConfig())
-        inEKF.setPose(0.0, -96.0, 0.0)
-        gt[0] = 0.0
-        gt[1] = -96.0
-        gt[2] = 0.0
-        gtSpeed = 0.0
-        prevSpeed = 0.0
-        prevGtYaw = 0.0
-        tSec = 0.0
-        distTraveled = 0.0
-        segIdx = 0
-        along = 0.0
-        manualBlackout = false
-        alignment.reset()
-        speedFilter.reset()
-        gtPath.clear()
-        estPath.clear()
-        routePath.clear()
-        log.clear()
-        lastGnssFixMs = 0L
-        lastMapMatchMs = 0L
-        alignedLogged = false
-        mapMatchLogged = false
-        lastVibCount = 0L
-        pushLog("• RESET — all state cleared")
-    }
-
-    private fun gnssAvailable(): Boolean {
-        val inTunnel = (tSec in 8.0..18.0) || (tSec in 36.0..46.0)
-        return !inTunnel && !manualBlackout
-    }
-
-    private fun stepSim() {
-        val dt = 0.05
-        tSec += dt
-
-        prevSpeed = gtSpeed
-        gtSpeed = 4.0 + 1.2 * sin(tSec / 5.0)
-        val aLong = (gtSpeed - prevSpeed) / dt
-        prevGtYaw = gt[2]
-        advanceAlongPath(gtSpeed * dt)
-        val yawRate = wrapAngle(gt[2] - prevGtYaw) / dt
-        distTraveled += gtSpeed * dt
-
-        if (!alignment.isCalibrated) {
-            alignment.feed(aLong, 0.0, 9.81)
-        }
-
-        val acc = floatArrayOf(
-            aLong.toFloat() + (rng.nextDouble() - 0.5).toFloat() * 0.1f - cal.accBiasX.toFloat(),
-            (rng.nextDouble() - 0.5).toFloat() * 0.1f - cal.accBiasY.toFloat(),
-            9.8f
-        )
-        val gyrRawZ = yawRate + (rng.nextDouble() - 0.5) * 0.02 - cal.gyrBiasZRad - simGyroBiasRad
-        val gyr = floatArrayOf(
-            (rng.nextDouble() - 0.5).toFloat() * 0.02f,
-            (rng.nextDouble() - 0.5).toFloat() * 0.02f,
-            (gyrRawZ + modelTrainer.gyrBiasRad).toFloat()
-        )
-        inEKF.predict(acc, gyr, dt.toFloat())
-
-        val gnssNow = gnssAvailable()
-        val nowReal = System.currentTimeMillis()
-
-        val aiSpeed = speedFilter.estimate(
-            acc[0],
-            dt.toFloat(),
-            if (gnssNow) gtSpeed else null
-        ).coerceIn(0.0, 15.0)
-        val speedSensor = if (gnssNow) {
-            (aiSpeed + (rng.nextDouble() - 0.5) * 0.1).toFloat()
-        } else {
-            (aiSpeed * (1.0 + (rng.nextDouble() - 0.5) * 0.002)).toFloat()
-        }
-        val wheelRaw = speedSensor * cal.wheelScale.toFloat() * simWheelScale
-        val wheelCorrected = wheelRaw * modelTrainer.wheelScale
-        if (gnssNow && !modelTrainer.isFinalized()) {
-            modelTrainer.feed(gtSpeed * dt, wheelRaw * dt, gyrRawZ, yawRate)
-            if (modelTrainer.isFinalized() && !trainedLogged) {
-                trainedLogged = true
-                pushLog("🧠 MODEL TRAINED on-device — wheel scale ${"%.4f".format(simWheelScale)} → ${"%.4f".format(modelTrainer.wheelScale)} · gyro z-bias ${"%.2f".format(Math.toDegrees(-simGyroBiasRad))}°/s → corrected (GNSS-clean fit)")
-            }
-        }
-        inEKF.correctWheel(
-            WheelMeasurement(
-                timestamp = System.currentTimeMillis(),
-                vxBody = wheelCorrected.toFloat()
-            )
-        )
-        if (outageDetector.update(gnssNow, nowReal)) {
-            if (!gnssNow) {
-                pushLog("⚠ GNSS BLACKOUT → seamless AI dead-reckoning in ${outageDetector.lastLatencyMs} ms (NHC + map-match armed)")
-                recoveredFlashUntil = 0L
-            } else {
-                lastGnssFixMs = 0L
-                recoveredFlashUntil = nowReal + 2500L
-                pushLog("✓ GNSS RE-ACQUIRED → GNSS+INS fusion resumes · re-anchoring")
-            }
-            mapMatchLogged = false
-        }
-
-        if (!alignment.isCalibrated && !alignedLogged) {
-            pushLog("✓ Alignment calibrated — pitch ${"%.1f".format(alignment.pitchDeg())}° roll ${"%.1f".format(alignment.rollDeg())}° yaw ${"%.1f".format(alignment.yawOffsetDeg())}°")
-            alignedLogged = true
-        }
-
-        var aiMode = "GNSS+INS FUSION"
-        if (gnssNow && nowReal - lastGnssFixMs >= 800L) {
-            lastGnssFixMs = nowReal
-            val z = doubleArrayOf(
-                gt[0] + (rng.nextDouble() - 0.5) * 0.6,
-                gt[1] + (rng.nextDouble() - 0.5) * 0.6,
-                gt[2] + (rng.nextDouble() - 0.5) * 0.02
-            )
-            inEKF.correctGnss(z)
-        } else if (!gnssNow) {
-            val st = inEKF.state()
-            if (nowReal - lastMapMatchMs >= 150L) {
-                lastMapMatchMs = nowReal
-                val mm = mapMatcher.match(st[0], st[1], cal.beltM)
-                if (mm.snapped) {
-                    inEKF.correctGnss(
-                        doubleArrayOf(mm.x, mm.y, st[2]),
-                        doubleArrayOf(6.0, 6.0, 1e-3)
-                    )
-                    aiMode = "DR + MAP-MATCH (NHC)"
-                    if (!mapMatchLogged) {
-                        pushLog("📍 Map-matched → snapped to street grid (NHC + lane-keeping)")
-                        mapMatchLogged = true
-                    }
-                } else {
-                    aiMode = "DEAD-RECKONING (NHC)"
-                }
-            }
-        }
-
-        val viCnt = speedFilter.vibrationCount()
-        if (viCnt != lastVibCount && viCnt > 0 && viCnt % 8 == 0L) {
-            lastVibCount = viCnt
-            pushLog("🌀 AI vibration filter — suppressed $viCnt shock/pothole events")
-        }
-
-        if (!gnssNow && tSec > 0.0 && distTraveled > 1.0 && tSec - lastBenchmarkLoggedAt > 4.0) {
-            lastBenchmarkLoggedAt = tSec
-            val st = inEKF.state()
-            val err = hypot(gt[0] - st[0], gt[1] - st[1])
-            val pct = err / distTraveled * 100.0
-            val probe = mapMatcher.match(st[0], st[1], cal.beltM)
-            pushLog("📊 DRIFT ${"%.1f".format(err)} m over ${"%.0f".format(distTraveled)} m = ${"%.1f".format(pct)}% (target <10%)")
-        }
-
-        val est = inEKF.state()
-        pushPath(gtPath, gt[0], gt[1])
-        pushPath(estPath, est[0], est[1])
-
-        val rr = mapMatcher.match(gt[0], gt[1], 12.0)
-        pushPath(routePath, rr.x, rr.y)
-
-        val pErr = hypot(gt[0] - est[0], gt[1] - est[1])
-        val sigma = hypot(inEKF.stdX(), inEKF.stdY())
-        val headingDeg = Math.toDegrees(inEKF.heading()).let { v ->
-            val norm = ((v % 360.0) + 360.0) % 360.0
-            norm
-        }
-        val driftPct = if (distTraveled > 1.0) pErr / distTraveled * 100.0 else 0.0
-
-        val now = System.currentTimeMillis()
-        val mode = when {
-            now < recoveredFlashUntil -> 2
-            gnssNow -> 0
-            else -> 1
-        }
-
-        val finalAi = aiMode
-        runOnUiThread { updateUi(mode, sigma, pErr, headingDeg, driftPct, finalAi) }
-    }
-
-    private fun updateUi(mode: Int, sigma: Double, pErr: Double, headingDeg: Double, driftPct: Double, aiMode: String) {
-        val est = inEKF.state()
-
-        when (mode) {
-            0 -> {
-                tvModeChip.text = "GNSS LINK ✓"
-                tvModeChip.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#0A2E36"))
-                tvModeChip.setTextColor(Color.parseColor("#38BDF8"))
-                tvStatus.text = "🟢 LIVE · GPS + IMU fused · AI speed filter · σ = ${"%.1f".format(sigma)} m"
-                tvStatus.setTextColor(Color.parseColor("#A7F3D0"))
-                setDot(dotGps, Color.parseColor("#4CAF50"))
-            }
-            1 -> {
-                tvModeChip.text = "GNSS BLACKOUT"
-                tvModeChip.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#3A1A1A"))
-                tvModeChip.setTextColor(Color.parseColor("#FF6B6B"))
-                tvStatus.text = "🔴 NO GPS · AI dead-reckoning keeps you online · σ = ${"%.1f".format(sigma)} m · NHC + map-match active"
-                tvStatus.setTextColor(Color.parseColor("#FFB4AB"))
-                setDot(dotGps, Color.parseColor("#FF5252"))
-            }
-            else -> {
-                tvModeChip.text = "RECOVERED ✓"
-                tvModeChip.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#1E3A2A"))
-                tvModeChip.setTextColor(Color.parseColor("#4ADE80"))
-                tvStatus.text = "🟢 GPS RE-ACQUIRED · position re-anchored · fusion resumed · σ = ${"%.1f".format(sigma)} m"
-                tvStatus.setTextColor(Color.parseColor("#A7F3D0"))
-                setDot(dotGps, Color.parseColor("#4CAF50"))
-            }
-        }
-
-        tvSpeed.text = String.format("%.1f", inEKF.velocity()[0])
-        tvHeading.text = String.format("%.0f", headingDeg)
-        tvPosErr.text = String.format("%.1f", pErr)
-        tvSigma.text = String.format("%.1f", sigma)
-        tvDist.text = String.format("%.0f", distTraveled)
-        tvDrift.text = String.format("%.1f%%", driftPct)
-        tvDrift.setTextColor(
-            if (driftPct < 10.0) Color.parseColor("#4ADE80") else Color.parseColor("#FF6B6B")
-        )
-        tvAiMode.text = aiMode
-
-        setDot(dotImu, Color.parseColor("#4CAF50"))
-        setDot(dotPsd, Color.parseColor("#4CAF50"))
-        setDot(dotTex, if (mode == 1) Color.parseColor("#FFB74D") else Color.parseColor("#4CAF50"))
-        setDot(dotAi, Color.parseColor("#A78BFA"))
-
-        navCanvas.setScene(
-            NavSatView.Scene(
-                gtX = gt[0], gtY = gt[1],
-                estX = est[0], estY = est[1],
-                stdX = inEKF.stdX(), stdY = inEKF.stdY(),
-                yaw = inEKF.heading(),
-                mode = mode,
-                gtPath = gtPath.toList(),
-                estPath = estPath.toList(),
-                route = routePath.toList()
-            )
-        )
-    }
-
-    private fun setDot(v: View, color: Int) {
-        v.backgroundTintList = ColorStateList.valueOf(color)
-    }
-
-    private fun pushPath(q: ArrayDeque<FloatArray>, x: Double, y: Double) {
-        q.addLast(floatArrayOf(x.toFloat(), y.toFloat()))
-        while (q.size > 1600) q.removeFirst()
-    }
-
-    private fun pushLog(msg: String) {
-        log.addFirst(msg)
-        while (log.size > 6) log.removeLast()
-        tvLog.text = log.joinToString("\n")
-        android.util.Log.d("NAVX", msg.replace("\n", " | "))
-    }
-
-    private fun wrapAngle(a: Double): Double {
-        var v = a
-        while (v > Math.PI) v -= 2 * Math.PI
-        while (v <= -Math.PI) v += 2 * Math.PI
-        return v
-    }
-
-    /** Move the vehicle along the rounded city-block circuit on the street grid. */
-    private fun advanceAlongPath(ds: Double) {
-        var remain = ds
-        while (remain > 0.0) {
-            val a = routeWp[segIdx]
-            val b = routeWp[segIdx + 1]
-            val dx = b[0] - a[0]
-            val dy = b[1] - a[1]
-            val segLen = hypot(dx, dy)
-            if (segLen <= 1e-9) {
-                segIdx = (segIdx + 1) % (routeWp.size - 1)
-                continue
-            }
-            val toEnd = segLen - along
-            if (remain >= toEnd) {
-                gt[0] = b[0]
-                gt[1] = b[1]
-                along = 0.0
-                segIdx = (segIdx + 1) % (routeWp.size - 1)
-                remain -= toEnd
-                continue
-            }
-            val prog = along + remain
-            gt[0] = a[0] + dx * prog / segLen
-            gt[1] = a[1] + dy * prog / segLen
-            along = prog
-            remain = 0.0
-        }
-        val a = routeWp[segIdx]
-        val b = routeWp[segIdx + 1]
-        gt[2] = Math.atan2(b[1] - a[1], b[0] - a[0])
+        pushLog("• Map anchored at $locName — real satellite + street tiles")
     }
 }

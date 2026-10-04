@@ -93,6 +93,30 @@ class NavSequence:
             return self.gnss_coverage >= d.min_gnss_coverage
         return True
 
+    def truth_alignment_ok(self, tol_s: float = 5.0) -> bool:
+        """True when truth covers the whole IMU window.
+
+        Labels are looked up by wall-clock time, so truth only has to *cover* the
+        IMU interval. Truth extending past the IMU is normal and harmless: a GNSS
+        logger often runs longer than the phone IMU on the same route (12 io_vnbd
+        runs have truth outlasting the IMU by up to 3330 s while starting at the
+        same epoch, so their labels are correctly aligned).
+
+        What must be rejected is the opposite -- truth that starts late or stops
+        early, which pairs each IMU window with the wrong trajectory point.
+        """
+        if self.truth is None or self.truth.empty:
+            return False
+        imu_ts = self.imu["ts"].to_numpy(float)
+        truth_ts = self.truth["ts"].to_numpy(float)
+        if len(imu_ts) < 2 or len(truth_ts) < 2:
+            return False
+        if truth_ts[0] > imu_ts[0] + tol_s:
+            return False
+        if truth_ts[-1] < imu_ts[-1] - tol_s:
+            return False
+        return True
+
     # -- cache io ------------------------------------------------------------
 
     def save(self, root: Path) -> Path:
@@ -525,6 +549,9 @@ def _build_io_vnbd_sequence(
     if not seq.passed_quality_gates(config):
         logger.info(f"io_vnbd: {seq.seq_id} filtered by quality gates")
         return None
+    if not seq.truth_alignment_ok():
+        logger.info(f"io_vnbd: {seq.seq_id} filtered by truth/IMU span misalignment")
+        return None
     return seq
 
 
@@ -622,6 +649,9 @@ def _build_ronin_sequence(h5_path: Path, config: Config) -> NavSequence | None:
     )
     if not seq.passed_quality_gates(config):
         return None
+    if not seq.truth_alignment_ok():
+        logger.info(f"{seq.source}: {seq.seq_id} filtered by truth/IMU span misalignment")
+        return None
     return seq
 
 
@@ -707,6 +737,9 @@ def _build_idol_sequence(feather: Path, config: Config) -> NavSequence | None:
     )
     if not seq.passed_quality_gates(config):
         return None
+    if not seq.truth_alignment_ok():
+        logger.info(f"{seq.source}: {seq.seq_id} filtered by truth/IMU span misalignment")
+        return None
     return seq
 
 
@@ -783,6 +816,9 @@ def _build_self_collected_sequence(run: Path, config: Config) -> NavSequence | N
         metadata={"native_imu_hz": native, "dropped_samples": dropped, **meta},
     )
     if not seq.passed_quality_gates(config):
+        return None
+    if not seq.truth_alignment_ok():
+        logger.info(f"{seq.source}: {seq.seq_id} filtered by truth/IMU span misalignment")
         return None
     return seq
 

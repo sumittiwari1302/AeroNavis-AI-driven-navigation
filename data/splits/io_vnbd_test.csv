@@ -1,8 +1,10 @@
 seq_id,file_path,start_ts,end_ts,hours,km,outage_minutes
-io_vnbd_S-Vw15_1,processed/io_vnbd/io_vnbd_S-Vw15_1,0.0,137.9,0.0383,0.0,0.0
+io_vnbd_S-S3b_1,processed/io_vnbd/io_vnbd_S-S3b_1,0.0,476.9,0.1325,14.032,0.0
+io_vnbd_S-S3b_2,processed/io_vnbd/io_vnbd_S-S3b_2,0.0,476.9,0.1325,14.032,0.0
+io_vnbd_S-Vta15_1,processed/io_vnbd/io_vnbd_S-Vta15_1,0.0,83.2,0.0231,1.613,0.0
+io_vnbd_S-Vta15_2,processed/io_vnbd/io_vnbd_S-Vta15_2,0.0,83.2,0.0231,1.613,0.0
 io_vnbd_S-Vta23_1,processed/io_vnbd/io_vnbd_S-Vta23_1,0.0,110.9,0.0308,1.051,0.0
 io_vnbd_S-Vta23_2,processed/io_vnbd/io_vnbd_S-Vta23_2,0.0,110.9,0.0308,1.051,0.0
-io_vnbd_S-T8_1,processed/io_vnbd/io_vnbd_S-T8_1,0.0,4678.3,1.2995,226.445,0.0
 io_vnbd_S-Vta2_1,processed/io_vnbd/io_vnbd_S-Vta2_1,0.0,1099.0,0.3053,11.066,0.0
 io_vnbd_S-Vta2_2,processed/io_vnbd/io_vnbd_S-Vta2_2,0.0,1099.0,0.3053,11.066,0.0
 io_vnbd_S-Vta16_1,processed/io_vnbd/io_vnbd_S-Vta16_1,0.0,1133.4,0.3148,13.493,0.0

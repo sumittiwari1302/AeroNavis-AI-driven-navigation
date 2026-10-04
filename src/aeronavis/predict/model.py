@@ -37,8 +37,14 @@ class PredictModelConfig:
 
 
 def get_predict_model_config(config: Config) -> PredictModelConfig:
+    # Velocity dataset provides 6 features: acc_x/y/z + gyr_x/y/z
+    input_dim = config.data.get("predict_input_dim", 6) if hasattr(config.data, "get") else 6
+    # Use velocity window as sequence length (200 @ 100Hz = 2s, or could downsample)
+    max_len = config.model.get("window", 200) if hasattr(config.model, "get") else 200
     return PredictModelConfig(
+        input_dim=input_dim,
         d_model=config.model.get("predict_d_model", 128) if hasattr(config.model, "get") else 128,
+        max_len=max_len,
     )
 
 
@@ -194,7 +200,7 @@ class PredictTransformer(nn.Module):
 
 def build_predict_model(config: Config) -> "PredictTransformer":
     """Factory to build prediction model from global config."""
-    model_config = PredictModelConfig()
+    model_config = get_predict_model_config(config)
     model = PredictTransformer(model_config)
     logger.info(model.model_summary())
     assert model.count_parameters() <= model_config.max_params, (
